@@ -111,6 +111,7 @@
     }
     #reportSelect.has-value { color: #111827; }
     #reportSelect option { color: #111827; }
+    #reportSelect option:disabled { color: #9ca3af; }
 
     #refDate {
       width: 100%;
@@ -144,7 +145,7 @@
       margin-bottom: 0.3rem;
     }
 
-    select, input[type="text"] {
+    select, input[type="text"], input[type="date"] {
       display: block;
       width: 100%;
       padding: 0.45rem 0.5rem;
@@ -156,7 +157,7 @@
       transition: border-color 0.12s, box-shadow 0.12s;
     }
     select:disabled { background: #f3f4f6; color: #9ca3af; cursor: not-allowed; }
-    select:focus, input[type="text"]:focus {
+    select:focus, input[type="text"]:focus, input[type="date"]:focus {
       outline: none;
       border-color: #5a8ad4;
       box-shadow: 0 0 0 3px rgba(90,138,212,0.15);
@@ -815,8 +816,8 @@
       <select id="reportSelect">
         <option value="" disabled selected hidden>-- Select report --</option>
         <option value="highway_sequence">Highway Sequence Listing</option>
-        <option value="Ramp_Detail">TSAR: Ramp Detail</option>
-        <option value="Ramp_Summary">TSAR: Ramp Summary</option>
+        <option value="Ramp_Detail" disabled>TSAR: Ramp Detail</option>
+        <option value="Ramp_Summary" disabled>TSAR: Ramp Summary</option>
       </select>
     </div>
   </div>
@@ -1526,25 +1527,67 @@ async function loadCountyCodeDomain() {
     return s.county + s.routeNum.padStart(3, '0') + s.routeSuffix + s.pmPrefix + s.pmSuffix + alignment;
   }
 
-  // Sort pairs by arMeasure, but group independent alignment sections (PMSuffix R or L)
-  // so all R records in a section appear before all L records in that section.
+  // Sort pairs by odMeasure, grouping independent alignment sections (PMSuffix R
+  // or L) so all R records in a section appear before all L records.
+  // Equation first-rows (isSecondEq=false, "EQUATES TO") are removed from the
+  // sort to prevent them from breaking R/L groups, then re-inserted immediately
+  // before their eq2 partner based on eqPairId.
   function sortWithIndependentAlignments(pairs) {
-    pairs.sort((a, b) => parseFloat(a.odMeasure) - parseFloat(b.odMeasure));
-    const result = [];
+    const eq1ById = new Map();
+    const main = pairs.filter(p => {
+      if (p.type === 'equation' && !p.isSecondEq) { eq1ById.set(p.eqPairId, p); return false; }
+      return true;
+    });
+
+    main.sort((a, b) => {
+      const diff = parseFloat(a.odMeasure) - parseFloat(b.odMeasure);
+      if (Math.abs(diff) > 0.001) return diff;
+      // At the same OD position, place equation points (pmSuffix='E') after
+      // all other records so physical landmarks appear before the back-equation.
+      if (a.pmSuffix === 'E' && b.pmSuffix !== 'E') return 1;
+      if (a.pmSuffix !== 'E' && b.pmSuffix === 'E') return -1;
+      return 0;
+    });
+    const grouped = [];
     let i = 0;
-    while (i < pairs.length) {
-      if (pairs[i].pmSuffix === 'R' || pairs[i].pmSuffix === 'L') {
+    while (i < main.length) {
+      if (main[i].pmSuffix === 'R' || main[i].pmSuffix === 'L') {
         const j = i;
-        while (i < pairs.length && (pairs[i].pmSuffix === 'R' || pairs[i].pmSuffix === 'L')) i++;
-        const section = pairs.slice(j, i);
-        const rRecs = section.filter(p => p.pmSuffix === 'R');
-        const lRecs = section.filter(p => p.pmSuffix === 'L');
-        result.push(...rRecs, ...lRecs);
+        // Continue through R, L, E, and any dot-record whose hgValue is 'R'
+        // or 'L'. pmPrefix is unreliable — some END INDEP ALIGN landmarks
+        // carry pmPrefix='.' rather than 'R', so we use hgValue exclusively.
+        while (i < main.length) {
+          const cur = main[i];
+          if (cur.pmSuffix === 'R' || cur.pmSuffix === 'L') {
+            i++;
+          } else if (cur.pmSuffix === 'E') {
+            i++;
+          } else if (cur.hgValue === 'R' || cur.hgValue === 'L') {
+            i++;
+          } else {
+            break;
+          }
+        }
+        const section = main.slice(j, i);
+        // R group: pmSuffix='R' ramps OR dot-records in HG 'R'
+        grouped.push(...section.filter(p => p.pmSuffix === 'R' || (p.pmSuffix !== 'L' && p.pmSuffix !== 'E' && p.hgValue === 'R')));
+        // L group: pmSuffix='L' ramps OR dot-records in HG 'L'
+        grouped.push(...section.filter(p => p.pmSuffix === 'L' || (p.pmSuffix !== 'R' && p.pmSuffix !== 'E' && p.hgValue === 'L')));
+        grouped.push(...section.filter(p => p.pmSuffix === 'E'));
       } else {
-        result.push(pairs[i++]);
+        grouped.push(main[i++]);
       }
     }
 
+    // Re-insert each eq1 immediately before its eq2 partner.
+    const result = [];
+    for (const p of grouped) {
+      if (p.type === 'equation' && p.isSecondEq) {
+        const eq1 = eq1ById.get(p.eqPairId);
+        if (eq1) result.push(eq1);
+      }
+      result.push(p);
+    }
     return result;
   }
 
@@ -1982,7 +2025,11 @@ async function loadCountyCodeDomain() {
     const allFeatures = (await Promise.all(chunks.map(async chunk => {
       const orClauses = chunk.map(p => {
         const rid = p.routeId.endsWith('_S') ? p.routeId.slice(0, -2) + '_P' : p.routeId;
-        return `(RouteID = '${rid}' AND FromARMeasure <= ${p.arMeasure} AND ToARMeasure >= ${p.arMeasure})`;
+        // Prefer odMeasure for the range lookup — it reflects the OD position on
+        // the main alignment and avoids the _S→_P translation mismatch that can
+        // place a feature inside the wrong highway-group / city-code segment.
+        const m = (p.odMeasure !== '' && p.odMeasure != null) ? parseFloat(p.odMeasure) : p.arMeasure;
+        return `(RouteID = '${rid}' AND FromARMeasure <= ${m} AND ToARMeasure >= ${m})`;
       }).join(' OR ');
       const body = new URLSearchParams({
         where:          `(${orClauses})${getDateFilter()}`,
@@ -2020,12 +2067,19 @@ async function loadCountyCodeDomain() {
     const map = new Map();
     for (const p of pairs) {
       const lookupId   = p.routeId.endsWith('_S') ? p.routeId.slice(0, -2) + '_P' : p.routeId;
+      const m = (p.odMeasure !== '' && p.odMeasure != null) ? parseFloat(p.odMeasure) : p.arMeasure;
       const candidates = byRoute.get(lookupId) ?? [];
-      const match = candidates.find(f => {
+      const matches = candidates.filter(f => {
         const from = f.attributes?.FromARMeasure;
         const to   = f.attributes?.ToARMeasure;
-        return from != null && to != null && p.arMeasure >= from && p.arMeasure <= to;
+        return from != null && to != null && m >= from && m <= to;
       });
+      // When multiple ranges share the same boundary point, prefer the one whose
+      // FromARMeasure is highest — i.e. the range that *starts* at the boundary
+      // rather than the range that merely *ends* there.
+      const match = matches.length > 1
+        ? matches.reduce((best, f) => f.attributes.FromARMeasure > best.attributes.FromARMeasure ? f : best)
+        : matches[0];
       map.set(p.name, match?.attributes?.[fieldName] ?? '');
     }
     return map;
@@ -2523,9 +2577,14 @@ async function loadCountyCodeDomain() {
       if (name == null || name === '') continue;
       const long = a.Landmarks_Long;
       const desc = (long != null && long !== '') ? `${name}, ${long}` : name;
+      // Use a composite key as pair.name so that downstream pipeline lookups
+      // (queryRangeLayer, translateToOD, hsl_queryRampDescriptions) each get a
+      // unique slot per landmark even when Landmarks_Short repeats at different
+      // physical positions. Display text is driven by pair.desc, not pair.name.
+      const key = `${name}|${a.ODMeasure ?? ''}`;
       const pair = {
         type:        'landmark',
-        name,
+        name:        key,
         desc,
         routeId:     a.RouteID,
         arMeasure:   a.ARMeasure,
@@ -2539,9 +2598,9 @@ async function loadCountyCodeDomain() {
         startDate:   a.InventoryItemStartDate ?? null,
         endDate:     a.InventoryItemEndDate   ?? null
       };
-      const existing = nameMap.get(name);
+      const existing = nameMap.get(key);
       if (!existing || (pair.county !== '' && existing.county === '')) {
-        nameMap.set(name, pair);
+        nameMap.set(key, pair);
       }
     }
     return Array.from(nameMap.values());
@@ -3141,9 +3200,12 @@ async function loadCountyCodeDomain() {
       _routeLabel    = paddedRoute;
       _directionFrom = direction.from;
       _directionTo   = direction.to;
-      const allPairs = sortWithIndependentAlignments([...rampPairs, ...landmarkPairs, ...routeBreakPairs, ...intersectionPairs, ...equationPairs]);
+      const unsortedPairs = [...rampPairs, ...landmarkPairs, ...routeBreakPairs, ...intersectionPairs, ...equationPairs];
+      const hgMap = await queryRangeLayer(unsortedPairs, 116, 'Highway_Group');
+      for (const p of unsortedPairs) p.hgValue = hgMap.get(p.name) ?? '';
+      const allPairs = sortWithIndependentAlignments(unsortedPairs);
       if (allPairs.length === 0) { hsl_showRampResults('none'); return; }
-      await hsl_queryRampDescriptions(allPairs, unresolvedIntersections);
+      await hsl_queryRampDescriptions(allPairs, unresolvedIntersections, hgMap);
     } catch (err) {
       hsl_showRampResults('error', err.message || 'An error occurred.');
     } finally {
@@ -3229,9 +3291,12 @@ async function loadCountyCodeDomain() {
       _routeLabel    = from.routeNum.padStart(3, '0');
       _directionFrom = direction.from;
       _directionTo   = direction.to;
-      const allPairs = sortWithIndependentAlignments([...rampPairs, ...landmarkPairs, ...routeBreakPairs, ...intersectionPairs, ...equationPairs]);
+      const unsortedPairs = [...rampPairs, ...landmarkPairs, ...routeBreakPairs, ...intersectionPairs, ...equationPairs];
+      const hgMap = await queryRangeLayer(unsortedPairs, 116, 'Highway_Group');
+      for (const p of unsortedPairs) p.hgValue = hgMap.get(p.name) ?? '';
+      const allPairs = sortWithIndependentAlignments(unsortedPairs);
       if (allPairs.length === 0) { hsl_showRampResults('none'); return; }
-      await hsl_queryRampDescriptions(allPairs, unresolvedIntersections);
+      await hsl_queryRampDescriptions(allPairs, unresolvedIntersections, hgMap);
     } finally {
       btn.disabled = false;
       stopThinking(btn);
@@ -3240,7 +3305,7 @@ async function loadCountyCodeDomain() {
 
   // ── HSL: Result pipeline ──────────────────────────────────────────────────
 
-  async function hsl_queryRampDescriptions(allPairs, unresolvedIntersections = []) {
+  async function hsl_queryRampDescriptions(allPairs, unresolvedIntersections = [], precomputedHgMap = null) {
     const rampsOnly = allPairs.filter(p => p.type === 'ramp');
     const fetchDescriptions = async () => {
       const descMap = new Map();
@@ -3282,11 +3347,9 @@ async function loadCountyCodeDomain() {
       }
       return descMap;
     };
-    const [descMap, hwyMap, cityMap] = await Promise.all([
-      fetchDescriptions(),
-      queryRangeLayer(allPairs, 116, 'Highway_Group'),
-      queryRangeLayer(allPairs, 74,  'City_Code')
-    ]);
+    const [descMap, hwyMap, cityMap] = precomputedHgMap
+      ? await Promise.all([fetchDescriptions(), Promise.resolve(precomputedHgMap), queryRangeLayer(allPairs, 74, 'City_Code')])
+      : await Promise.all([fetchDescriptions(), queryRangeLayer(allPairs, 116, 'Highway_Group'), queryRangeLayer(allPairs, 74, 'City_Code')]);
     const odMap = translateToOD(allPairs);
     const results = allPairs.map((p, i) => {
       let hwyGroup = hwyMap.get(p.name) ?? '';
@@ -3590,7 +3653,10 @@ async function loadCountyCodeDomain() {
         queryEquationPoints(segments)
       ]);
 
-      const allPairs = sortWithIndependentAlignments([...rampPairs, ...landmarkPairs, ...routeBreakPairs, ...intersectionPairs, ...equationPairs]);
+      const unsortedPairs = [...rampPairs, ...landmarkPairs, ...routeBreakPairs, ...intersectionPairs, ...equationPairs];
+      const hgMapPre = await queryRangeLayer(unsortedPairs, 116, 'Highway_Group');
+      for (const p of unsortedPairs) p.hgValue = hgMapPre.get(p.name) ?? '';
+      const allPairs = sortWithIndependentAlignments(unsortedPairs);
       if (allPairs.length === 0) return;
 
       // Capture routeId/arMeasure before any merging; default to null so missing entries fail visibly
@@ -3628,7 +3694,7 @@ async function loadCountyCodeDomain() {
       }
 
       const [hwyMap, cityMap] = await Promise.all([
-        queryRangeLayer(allPairs, 116, 'Highway_Group'),
+        Promise.resolve(hgMapPre),
         queryRangeLayer(allPairs, 74,  'City_Code')
       ]);
       const odMap = translateToOD(allPairs);
