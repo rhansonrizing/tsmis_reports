@@ -1105,7 +1105,7 @@
     const params = new URLSearchParams({
       client_id:     CONFIG.oauthClientId,
       response_type: 'token',
-      redirect_uri:  (window.location.origin + window.location.pathname).replace('127.0.0.1', 'localhost'),
+      redirect_uri:  CONFIG.oauthRedirectUrl,
       expiration:    '120'
     });
     window.location.href = `${CONFIG.oauthAuthorizeUrl}?${params}`;
