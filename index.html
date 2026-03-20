@@ -1027,8 +1027,6 @@
   let _token         = null;
   let _tokenExpiry   = null;
   let _portalUsername = '';
-  let _portalFullName = '';
-  let _portalGroups   = [];   // [{id, title, userMembership}, ...]
 
   // ── Pagination state ───────────────────────────────────────────────────────
   const PAGE_SIZE  = 25;
@@ -1117,21 +1115,6 @@
     return true;
   }
 
-  async function fetchCurrentUser() {
-    const portalBase = CONFIG.oauthAuthorizeUrl
-      .replace('/oauth2/authorize', '')
-      .replace('/sharing/rest', '');
-    try {
-      const resp = await fetch(`${portalBase}/sharing/rest/community/self?f=json&token=${_token}`);
-      const data = await resp.json();
-      if (data.error) { console.warn('[fetchCurrentUser] portal error:', data.error); return; }
-      if (data.username) _portalUsername = data.username;
-      if (data.fullName) _portalFullName = data.fullName;
-      if (Array.isArray(data.groups)) _portalGroups = data.groups;
-    } catch (e) {
-      console.warn('[fetchCurrentUser] fetch failed:', e);
-    }
-  }
 
 async function loadCountyCodeDomain() {
     try {
@@ -1468,7 +1451,6 @@ async function loadCountyCodeDomain() {
         if (hp.username) _portalUsername = hp.username;
         history.replaceState(null, '', window.location.pathname + window.location.search);
         setAuthUI(true);
-        fetchCurrentUser();
         return;
       }
     }
@@ -2441,7 +2423,7 @@ async function loadCountyCodeDomain() {
          <table class="rs-cover-table">
            ${cpRow('REPORT DATE',    todayMDY())}
            ${cpRow('REFERENCE DATE', fmtDate(refDate))}
-           ${cpRow('SUBMITTOR',      _portalFullName || _portalUsername)}
+           ${cpRow('SUBMITTOR',      _portalUsername)}
            ${cpRow('REPORT TITLE',   reportTitle)}
          </table>
        </div>
