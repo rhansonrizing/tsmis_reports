@@ -1,9 +1,9 @@
 const CONFIG = {
-  mapServiceUrl:    "https://arcgis.rizing.dev/primary/rest/services/Caltrans/lrs_tsnr/MapServer",
-  featureServiceUrl:"https://arcgis.rizing.dev/primary/rest/services/Caltrans/lrs_tsnr/FeatureServer",
-  vmsUrl:           "https://arcgis.rizing.dev/primary/rest/services/Caltrans/lrs_tsnr/VersionManagementServer",
-  oauthClientId:    "LdLDgsAFMZ7b0bk5",
-  oauthAuthorizeUrl:"https://arcgis.rizing.dev/portal/sharing/rest/oauth2/authorize",
-  oauthTokenUrl:    "https://arcgis.rizing.dev/portal/sharing/rest/oauth2/token",
-  oauthRedirectUrl: "http://localhost:5500/index.html"
+  mapServiceUrl:    "https://rhapps-prod.dot.ca.gov/ars/rest/services/TSMIS/lrs_tsmis_prod/MapServer",
+  featureServiceUrl:"https://rhapps-prod.dot.ca.gov/ars/rest/services/TSMIS/lrs_tsmis_prod/FeatureServer",
+  vmsUrl:           "https://rhapps-prod.dot.ca.gov/ars/rest/services/TSMIS/lrs_tsmis_prod/VersionManagementServer",
+  oauthClientId:    "z7jnDQesKUG5xAxv",
+  oauthAuthorizeUrl:"https://rhapps-prod.dot.ca.gov/portal/sharing/rest/oauth2/authorize",
+  oauthTokenUrl:    "https://rhapps-prod.dot.ca.gov/portal/sharing/rest/oauth2/token",
+  oauthRedirectUrl: "https://rhansonrizing.github.io/tsmis_reports/index.html"
 };
