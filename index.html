@@ -1833,7 +1833,8 @@ async function loadCountyCodeDomain() {
 
     const dateFilter     = getDateFilter();
     const districtFilter = district != null ? ` AND District = ${parseInt(district, 10)}` : '';
-    const resolvedCounty = county ? (_countyNameToCode.get(county) ?? county) : null;
+    const rawCounty      = county ? (_countyNameToCode.get(county) ?? county) : null;
+    const resolvedCounty = rawCounty && rawCounty.length === 2 ? rawCounty + '.' : rawCounty;
     const countyFilter   = resolvedCounty != null ? ` AND County = '${resolvedCounty.replace(/'/g, "''")}'` : '';
     const where = segClauses.length === 1
       ? segClauses[0].slice(1, -1) + districtFilter + countyFilter + ' AND LRSToDate IS NULL' + dateFilter
@@ -2535,8 +2536,9 @@ async function loadCountyCodeDomain() {
       : ` AND (RouteSuffix IS NULL OR RouteSuffix <> 'S')`;
     const dateFilter     = getDateFilter();
     const districtFilter = district != null ? ` AND District = ${parseInt(district, 10)}` : '';
-    const resolvedCountyL = county ? (_countyNameToCode.get(county) ?? county) : null;
-    const countyFilter   = resolvedCountyL != null ? ` AND County = '${resolvedCountyL.replace(/'/g, "''")}'` : '';
+    const rawCountyL      = county ? (_countyNameToCode.get(county) ?? county) : null;
+    const resolvedCountyL = rawCountyL && rawCountyL.length === 2 ? rawCountyL + '.' : rawCountyL;
+    const countyFilter    = resolvedCountyL != null ? ` AND County = '${resolvedCountyL.replace(/'/g, "''")}'` : '';
     const where = uniqueClauses.length === 1
       ? uniqueClauses[0].slice(1, -1) + suffixFilter + districtFilter + countyFilter + ' AND LRSToDate IS NULL' + dateFilter
       : `(${uniqueClauses.join(' OR ')})${suffixFilter}${districtFilter}${countyFilter} AND LRSToDate IS NULL${dateFilter}`;
@@ -2625,8 +2627,9 @@ async function loadCountyCodeDomain() {
       : ` AND (RouteSuffix IS NULL OR RouteSuffix <> 'S')`;
     const dateFilter     = getDateFilter();
     const districtFilter = district != null ? ` AND District = ${parseInt(district, 10)}` : '';
-    const resolvedCountyR = county ? (_countyNameToCode.get(county) ?? county) : null;
-    const countyFilter   = resolvedCountyR != null ? ` AND County = '${resolvedCountyR.replace(/'/g, "''")}'` : '';
+    const rawCountyR      = county ? (_countyNameToCode.get(county) ?? county) : null;
+    const resolvedCountyR = rawCountyR && rawCountyR.length === 2 ? rawCountyR + '.' : rawCountyR;
+    const countyFilter    = resolvedCountyR != null ? ` AND County = '${resolvedCountyR.replace(/'/g, "''")}'` : '';
     const where = uniqueClauses.length === 1
       ? uniqueClauses[0].slice(1, -1) + suffixFilter + districtFilter + countyFilter + ' AND LRSToDate IS NULL' + dateFilter
       : `(${uniqueClauses.join(' OR ')})${suffixFilter}${districtFilter}${countyFilter} AND LRSToDate IS NULL${dateFilter}`;
@@ -2775,7 +2778,7 @@ async function loadCountyCodeDomain() {
   // ── HSL: Query intersections (layers 0, 149, 151, g2m, translate) ─────────
 
   async function queryIntersections(segments, routeNum, district = null, county = null) {
-    if (district != null) {
+    if (district != null || county != null) {
       return await queryIntersectionsByDistrict(segments, routeNum, district, county);
     }
     try {
@@ -3003,13 +3006,14 @@ async function loadCountyCodeDomain() {
       const routeNumDigits = rnMatch ? rnMatch[1].padStart(3, '0') : String(routeNum).padStart(3, '0');
       const routeSuffix    = rnMatch ? rnMatch[2] : '';
       const dateFilter   = getDateFilter('Int_Geometry_Begin_Date', 'Int_Geometry_End_Date');
-      const districtCode = String(parseInt(district, 10));
       const segRouteIds  = new Set(segments.map(s => s.fromBest.routeId));
       const INT_CHUNK    = 200;
       const outFields151 = 'INTERSECTION_ID,Intersection_Name,County_Code,District_Code,Main_RouteNum,Main_RouteSuffix,Main_PMPrefix,Main_PMSuffix,Main_PMMeasure,Main_Alignment,Cross_RouteNum,Cross_RouteSuffix,Cross_PMPrefix,Cross_PMSuffix,Cross_PMMeasure,Cross_Alignment';
-      const countyCode   = county ? (_countyNameToCode.get(county) ?? null) : null;
-      const countyClause = countyCode ? ` AND County_Code = '${countyCode}'` : '';
-      const baseFilter   = `District_Code = '${districtCode}'${countyClause} AND LRS_DATE_RETIRE IS NULL${dateFilter}`;
+      const districtClause = district != null ? `District_Code = '${String(parseInt(district, 10))}'` : null;
+      const rawCountyCode  = county ? (_countyNameToCode.get(county) ?? county) : null;
+      const countyCode     = rawCountyCode && rawCountyCode.length === 2 ? rawCountyCode + '.' : rawCountyCode;
+      const countyClause   = countyCode ? `County_Code = '${countyCode}'` : null;
+      const baseFilter     = [...[districtClause, countyClause, `LRS_DATE_RETIRE IS NULL`].filter(Boolean)].join(' AND ') + dateFilter;
       const fetch151 = async (where) => {
         const body = new URLSearchParams({
           where,
