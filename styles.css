@@ -1,0 +1,790 @@
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f0f2f5;
+      min-height: 100vh;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 2.5rem 1rem;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1), 0 4px 16px rgba(0,0,0,0.06);
+      padding: 2rem;
+      width: 100%;
+      max-width: 1032px;
+      position: relative;
+    }
+
+    .caltrans-logo {
+      position: absolute;
+      top: 1.25rem;
+      left: 0;
+      height: 52px;
+      width: auto;
+    }
+
+    .page-header {
+      display: flex;
+      flex-direction: row;
+      justify-content: flex-end;
+      align-items: center;
+      margin-bottom: 0;
+    }
+    #controlsGrid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      align-items: start;
+      column-gap: 1.5rem;
+      row-gap: 0.35rem;
+      margin-top: 1rem;
+    }
+    #districtRow    { grid-column: 1; grid-row: 1; }
+    #districtCountyRow { grid-column: 1; grid-row: 2; }
+    #districtRouteRow  { grid-column: 1; grid-row: 3; }
+    #versionCtrl    { grid-column: 3; grid-row: 1; }
+    #refDateWrap    { grid-column: 3; grid-row: 2; }
+    #onOffSection   { grid-column: 3; grid-row: 3; }
+    .ctrl-row {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .ctrl-row label {
+      margin-bottom: 0;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: #6b7280;
+      white-space: nowrap;
+      display: block;
+    }
+    #generateRow {
+      grid-column: 2;
+      grid-row: 3;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      padding-top: calc(0.8rem + 0.35rem);
+    }
+    #generateRow .btn-primary {
+      width: 100%;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      font-size: 1.8rem;
+      font-weight: 600;
+      color: #111827;
+      text-align: center;
+    }
+
+    .report-select-wrap {
+      border: 2px solid #003484;
+      border-radius: 8px;
+      padding: 0.25rem 1.25rem 0.35rem;
+      display: inline-block;
+    }
+
+    #reportSelect {
+      font-size: 1.3rem;
+      font-weight: normal;
+      color: #9ca3af;
+      text-align: left;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      outline: none;
+      appearance: auto;
+    }
+    #reportSelect.has-value { color: #111827; }
+    #reportSelect option { color: #111827; }
+    #reportSelect option:disabled { color: #9ca3af; }
+
+    #refDate {
+      width: 100%;
+      font-size: 0.8125rem;
+      padding: 0.45rem 0.5rem;
+    }
+
+    .auth-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.75rem;
+      color: #6b7280;
+      margin-bottom: 1.25rem;
+    }
+
+    .auth-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #d1d5db;
+      flex-shrink: 0;
+    }
+    .auth-dot.ok { background: #22c55e; }
+
+    label {
+      display: block;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      color: #374151;
+      margin-bottom: 0.3rem;
+    }
+
+    select, input[type="text"], input[type="date"] {
+      display: block;
+      width: 100%;
+      padding: 0.45rem 0.5rem;
+      font-size: 0.8125rem;
+      color: #111827;
+      background: #fff;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      transition: border-color 0.12s, box-shadow 0.12s;
+    }
+    select:disabled { background: #f3f4f6; color: #9ca3af; cursor: not-allowed; }
+    select:focus, input[type="text"]:focus, input[type="date"]:focus {
+      outline: none;
+      border-color: #5a8ad4;
+      box-shadow: 0 0 0 3px rgba(90,138,212,0.15);
+    }
+    input[type="text"]::placeholder { color: #c4c9d0; }
+
+    /* ── Measure section ──────────────────────────────────── */
+    #appForm { margin-top: 1rem; }
+    .measure-section {
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      padding: 0.5rem 1rem 1rem;
+      margin-bottom: 0.875rem;
+    }
+
+    .section-hdr {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 0 0.3rem;
+    }
+
+    .fields-row {
+      display: grid;
+      grid-template-columns: 1.3fr 1fr 0.75fr 0.75fr 0.75fr 1.1fr;
+      gap: 0.6rem;
+      align-items: end;
+    }
+
+    .field-error {
+      display: none;
+      margin: 0.35rem 0 0;
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: #dc2626;
+      text-align: center;
+    }
+
+    /* ── Buttons ──────────────────────────────────────────── */
+    .btn-primary {
+      display: block;
+      width: 100%;
+      padding: 0.6rem 1rem;
+      margin-top: 0.25rem;
+      background: #004abc;
+      color: #fff;
+      font-size: 0.875rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    .btn-primary:hover:not(:disabled) { background: #165ac2; }
+    .btn-primary:disabled { background: #a3bee7; cursor: not-allowed; }
+
+    /* ── Results ──────────────────────────────────────────── */
+    .results-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem;
+      margin-top: 1rem;
+    }
+
+    .result-box {
+      padding: 0.875rem 1rem;
+      border-radius: 4px;
+      font-size: 0.875rem;
+    }
+    .result-box.success { background: #f0fdf4; border: 1px solid #86efac; }
+    .result-box.error   { background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b; }
+
+    .result-section-hdr {
+      font-size: 0.7rem;
+      font-weight: 700;
+      color: #9ca3af;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 0.5rem;
+    }
+
+    .result-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 1rem;
+    }
+    .result-row + .result-row { margin-top: 0.45rem; }
+
+    .result-lbl {
+      font-size: 0.7rem;
+      font-weight: 700;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+    }
+
+    .result-val {
+      font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+      font-size: 0.9375rem;
+      color: #111827;
+      word-break: break-all;
+    }
+
+    .result-val-wrap {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .copy-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 0;
+      color: #9ca3af;
+      flex-shrink: 0;
+      line-height: 1;
+      transition: color 0.12s;
+    }
+    .copy-btn:hover  { color: #5a8ad4; }
+    .copy-btn.copied { color: #22c55e; }
+
+    /* ── Ramp results ─────────────────────────────────────── */
+    .ramp-results {
+      margin-top: 1rem;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      padding: 0.875rem 1rem;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.13), 0 1px 4px rgba(0,0,0,0.09);
+    }
+    .ramp-results.error {
+      background: #fef2f2;
+      border-color: #fca5a5;
+      color: #991b1b;
+    }
+
+    .ramp-results-hdr {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 0.625rem;
+    }
+
+    .ramp-col-template {
+      display: grid;
+      grid-template-columns: 11ch 2ch 9ch 10ch 4ch 3ch 7ch 2ch 2ch 4ch 10ch 2ch 4fr;
+      gap: 0.5rem;
+      align-items: center;
+    }
+
+    .hsl-ramp-col-template {
+      display: grid;
+      grid-template-columns: minmax(0,0.4fr) minmax(0,0.55fr) minmax(0,0.7fr) minmax(0,0.3fr) 8ch minmax(0,0.4fr) minmax(0,0.175fr) minmax(0,0.3fr) minmax(0,1.1fr) minmax(0,4fr);
+      gap: 0.5rem;
+      align-items: center;
+    }
+
+    .unresolved-section {
+      margin-top: 1.5rem;
+      border-top: 2px solid #f59e0b;
+      padding-top: 0.75rem;
+    }
+    .unresolved-heading {
+      font-weight: 600;
+      color: #b45309;
+      margin-bottom: 0.5rem;
+      font-size: 0.85rem;
+    }
+    .unresolved-list {
+      list-style: disc;
+      padding-left: 1.5rem;
+      font-size: 0.8rem;
+      color: #374151;
+    }
+    .unresolved-list li {
+      margin-bottom: 0.25rem;
+    }
+
+
+    .ramp-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    .ramp-list-header {
+      padding: 0.25rem 0.6rem 0.35rem;
+      border-bottom: 2px solid #e5e7eb;
+      margin-bottom: 0.2rem;
+      font-size: 0.8125rem;
+      font-weight: 700;
+      color: #9ca3af;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      align-items: end;
+    }
+    .ramp-list-header > span {
+      font-size: 0.7rem;
+      text-align: center;
+    }
+    .ramp-list-header > span:last-child {
+      text-align: left;
+    }
+    .ramp-item > span {
+      text-align: center;
+    }
+    .ramp-item > span:last-child {
+      text-align: left;
+    }
+    .ramp-item > span:nth-child(n+5) {
+      padding-left: 3.5ch;
+    }
+    .ramp-item > span:nth-child(7) {
+      padding-left: 5ch;
+    }
+    .ramp-item > span:nth-child(11) {
+      padding-left: 5.5ch;
+    }
+    .ramp-item > span:nth-child(12) {
+      padding-left: 4.5ch;
+    }
+    .ramp-list-header > span:nth-child(12) {
+      padding-right: 4ch;
+    }
+    .ramp-item > span:last-child {
+      padding-left: 4ch;
+    }
+
+    .ramp-item {
+      padding: 0.35rem 0.6rem;
+      font-size: 0.8125rem;
+      color: #374151;
+      border-radius: 3px;
+    }
+    .ramp-item:nth-child(odd) { background: #e9ebed; }
+
+    .ramp-empty {
+      font-size: 0.875rem;
+      color: #9ca3af;
+      font-style: italic;
+    }
+
+    .ramp-pagination {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.4rem;
+    }
+    .page-arrow {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 1rem;
+      color: #374151;
+      padding: 0.1rem 0.4rem;
+      border-radius: 3px;
+      line-height: 1;
+    }
+    .page-arrow:hover:not(:disabled) { background: #f3f4f6; }
+    .page-arrow:disabled { color: #d1d5db; cursor: default; }
+    .pagination-left,
+    .pagination-right {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.2rem;
+    }
+    .pagination-left { align-items: flex-start; }
+    .pagination-right { align-items: flex-end; }
+    .export-btn {
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: #004abc;
+      background: #fff;
+      border: 2px solid #004abc;
+      border-radius: 6px;
+      padding: 0.35rem 1rem;
+      cursor: pointer;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .export-btn:hover { background: #004abc; color: #fff; }
+
+    .ptc-btn {
+      display: inline-flex;
+      align-items: stretch;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      background: #9ca3af;
+      padding: 2px;
+    }
+    .ptc-btn:hover { background: linear-gradient(to right, #003484, #004abc); }
+    .ptc-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .ptc-label {
+      background: #fff;
+      border-radius: 6px 0 0 6px;
+      padding: 0.55rem 1.6rem;
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: #003484;
+      letter-spacing: 0.1em;
+      display: flex;
+      align-items: center;
+    }
+    .ptc-arrow {
+      border-radius: 0 6px 6px 0;
+      padding: 0.55rem 1rem;
+      color: #fff;
+      font-size: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .mode-selector {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 1rem 0 1rem;
+    }
+    .mode-selector-box {
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      padding: 0.5rem 1.25rem 0.75rem;
+      margin: 0;
+      box-shadow: -3px 3px 6px rgba(0,0,0,0.06), 3px 3px 6px rgba(0,0,0,0.06), 0 4px 6px rgba(0,0,0,0.06);
+    }
+    .mode-selector-btns {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+    .mode-btn {
+      padding: 0.6rem 1.25rem;
+      white-space: nowrap;
+      width: 100%;
+      background: #004abc;
+      color: #fff;
+      font-size: 0.875rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.12s;
+      text-transform: uppercase;
+    }
+    .mode-btn:hover:not(:disabled) { background: #165ac2; }
+    .mode-btn:disabled { background: #a3bee7; cursor: not-allowed; }
+    .mode-btn.active { background: #003484; }
+    .mode-selector-label {
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: #6b7280;
+      white-space: nowrap;
+      padding: 0 0.4rem;
+    }
+    .route-form-row {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      padding: 1rem 0 0.5rem;
+    }
+    .route-form-row label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #374151;
+    }
+    .route-form-row select {
+      font-size: 0.85rem;
+      padding: 0.3rem 0.5rem;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      min-width: 120px;
+      width: auto;
+    }
+    #districtSelect,
+    #districtCountySelect,
+    #districtRouteSelect,
+    #from-county,
+    #to-county { color: #9ca3af; }
+    #districtSelect.has-value,
+    #districtCountySelect.has-value,
+    #districtRouteSelect.has-value,
+    #from-county.has-value,
+    #to-county.has-value { color: #111827; }
+    #districtSelect option,
+    #districtCountySelect option,
+    #districtRouteSelect option,
+    #from-county option,
+    #to-county option { color: #111827; }
+    .report-title {
+      text-align: center;
+      line-height: 1.3;
+    }
+    .report-title-line1 {
+      font-size: 1.6rem;
+      font-weight: 600;
+      color: #374151;
+    }
+    .report-title-line2 {
+      font-size: 1.5rem;
+      color: #6b7280;
+    }
+    .report-title-line3 {
+      font-size: 1.2rem;
+      color: #6b7280;
+      margin-top: 1.5rem;
+    }
+    .page-info {
+      font-size: 0.75rem;
+      color: #6b7280;
+      text-align: center;
+      margin-top: 0.4rem;
+    }
+
+    #loginPrompt {
+      text-align: center;
+      color: #6b7280;
+      font-size: 0.875rem;
+      padding: 0.5rem 0;
+    }
+
+    .report-action-bar {
+      display: flex;
+      align-items: flex-start;
+      padding: 0.4rem 0 0;
+    }
+    .report-action-bar .report-title {
+      flex: 1;
+      text-align: center;
+    }
+
+    .rs-summary-footer {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      padding: 0.75rem 0.25rem 0.25rem;
+      font-size: 1.2rem;
+      color: #111827;
+    }
+    .generated-on {
+      font-size: 0.72rem;
+      color: #9ca3af;
+      text-align: right;
+      padding: 0.75rem 0.25rem 0.25rem;
+    }
+
+    /* ── RS: Cover Page ──────────────────────────────────────────────────── */
+    .rs-cover {
+      border-bottom: 1px solid #d1d5db;
+      padding: 1.5rem 0 1.5rem;
+      margin-bottom: 0.5rem;
+      font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+    }
+    .rs-cover-agency {
+      text-align: center;
+      font-style: italic;
+      font-size: 1.05rem;
+      font-family: inherit;
+      margin-bottom: 1.25rem;
+    }
+    .rs-cover-report-title {
+      font-size: 1rem;
+      font-weight: bold;
+      margin-bottom: 1rem;
+    }
+    .rs-cover-section {
+      margin-bottom: 0.75rem;
+    }
+    .rs-cover-section-label {
+      font-weight: bold;
+      font-size: 0.85rem;
+      margin-bottom: 0.3rem;
+    }
+    .rs-cover-table {
+      border-collapse: collapse;
+      margin-left: 2rem;
+      font-size: 0.82rem;
+    }
+    .rs-cover-table td { padding: 0.05rem 0.5rem 0.05rem 0; vertical-align: top; }
+    .rs-cover-table .cp-name { min-width: 9rem; }
+    .rs-cover-table .cp-sep  { padding-right: 0.75rem; }
+    @media print {
+      .rs-cover { page-break-after: always; border-bottom: none; }
+    }
+    @media screen {
+      .rs-cover { display: none; }
+    }
+
+    /* ── HSL: Cover Page additions ───────────────────────────────────────── */
+    .hsl-cover-agency {
+      text-align: center;
+      font-size: 1.4rem;
+      font-family: serif;
+      margin-bottom: 0.5rem;
+    }
+    .hsl-cover-report-title {
+      text-align: center;
+      font-size: 1.15rem;
+      font-family: serif;
+      margin-bottom: 1.5rem;
+    }
+    .hsl-cover-note {
+      border: 1px solid #000;
+      padding: 0.5rem 0.75rem;
+      margin-bottom: 0.75rem;
+      font-size: 0.82rem;
+    }
+    .hsl-cover-note-header {
+      text-align: center;
+      font-weight: bold;
+      margin-bottom: 0.35rem;
+    }
+    .hsl-cover-note p { margin: 0; font-weight: bold; }
+    .hsl-cover-policy {
+      border: 1px solid #000;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.82rem;
+    }
+    .hsl-cover-policy p { margin: 0 0 0.5rem; }
+    .hsl-cover-policy p:last-child { margin-bottom: 0; }
+
+    /* ── RS: Ramp Summary ────────────────────────────────────────────────── */
+    .rs-report { padding: 1rem 0; }
+    .rs-fieldsets { display: flex; flex-direction: row; gap: 1.25rem; align-items: flex-start; }
+    .rs-fieldsets-col { display: inline-flex; flex-direction: column; gap: 1.25rem; }
+    .rs-fieldsets-col .rs-fieldset { width: 100%; }
+    .rs-fieldsets-right { display: flex; flex-direction: column; gap: 1.25rem; flex: 1; }
+    .rs-fieldsets-right .rs-fieldset { width: 100%; }
+    .rs-fieldset { box-shadow: none !important; }
+    .rs-table { border-collapse: collapse; }
+    .rs-table th, .rs-table td { padding: 0.1rem 1.5rem 0.1rem 0; text-align: left; font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace !important; font-size: 0.9375rem !important; }
+    .rs-num { min-width: 5ch; text-align: right !important; padding-right: 1.5rem !important; }
+
+    /* ── Confirm modal ──────────────────────────────────────────────────────── */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.45);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal-box {
+      background: #fff;
+      border-radius: 10px;
+      padding: 2rem 2.25rem 1.5rem;
+      max-width: 360px;
+      width: 90%;
+      box-shadow: 0 8px 32px rgba(0,52,132,0.18);
+      text-align: center;
+    }
+    .modal-message {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #003484;
+      margin-bottom: 1.5rem;
+      line-height: 1.4;
+    }
+    .modal-actions {
+      display: flex;
+      gap: 0.75rem;
+      justify-content: center;
+    }
+    .modal-yes {
+      background: #fff;
+      color: #004abc;
+      border: 2px solid #004abc;
+      border-radius: 6px;
+      padding: 0.45rem 1.5rem;
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+    .modal-yes:hover { background: #004abc; color: #fff; }
+    .modal-no {
+      background: #fff;
+      color: #004abc;
+      border: 2px solid #004abc;
+      border-radius: 6px;
+      padding: 0.45rem 1.5rem;
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+    .modal-no:hover { background: #004abc; color: #fff; }
+
+    /* ── HSL: Print table (thead repeats on each page) ──────────────────── */
+    .hsl-print-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.78rem;
+    }
+    .hsl-print-table thead { display: table-header-group; }
+    .hsl-print-table th {
+      font-size: 0.7rem;
+      text-align: center;
+      font-weight: 700;
+      color: #9ca3af;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border-bottom: 2px solid #e5e7eb;
+      padding: 0.25rem 0.3rem 0.35rem;
+      vertical-align: bottom;
+    }
+    .hsl-print-table th:last-child { text-align: left; }
+    .hsl-print-table td {
+      padding: 0.1rem 0.3rem;
+      text-align: center;
+      vertical-align: middle;
+    }
+    .hsl-print-table td:last-child { text-align: left; }
+
+    @page { margin-top: 0; }
+    @media print {
+      body { background: none; padding: 0; }
+      .card { box-shadow: none !important; padding: 0; }
+      .caltrans-logo, #modeSelector, .page-header, #loginPrompt, #routeForm, #appForm, #districtRouteForm,
+      #controlsGrid, .report-action-bar, .pagination-left, .pagination-right, .page-info,
+      .generated-on { display: none !important; }
+      #rampResults { display: block !important; border: none; margin: 0; padding: 0; }
+      * { box-shadow: none !important; }
+      .ramp-pagination { display: none !important; }
+    }
