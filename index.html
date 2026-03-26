@@ -816,8 +816,8 @@
       <select id="reportSelect">
         <option value="" disabled selected hidden>-- Select report --</option>
         <option value="highway_sequence">Highway Sequence Listing</option>
-        <option value="Ramp_Detail" disabled>TSAR: Ramp Detail</option>
-        <option value="Ramp_Summary" disabled>TSAR: Ramp Summary</option>
+        <option value="Ramp_Detail">TSAR: Ramp Detail</option>
+        <option value="Ramp_Summary">TSAR: Ramp Summary</option>
       </select>
     </div>
   </div>
@@ -1131,6 +1131,56 @@ async function loadCountyCodeDomain() {
     } catch (e) {
       console.warn('[loadCountyCodeDomain] error:', e.message);
     }
+  }
+
+  /*
+   * Feature Service Layer Index Reference
+   * ─────────────────────────────────────
+   *  0   – Intersection geometry (point features)
+   *  116 – AllRoads (route geometry / LRS)
+   *  123 – Landmarks (EV_SHS_LANDMARK; County uses 3-char code e.g. 'LA.')
+   *  132 – Ramps (EV_SHS_RAMP; County uses 3-char code)
+   *  133 – Route Breaks (EV_SHS_ROUTE_BREAK; County uses 3-char code)
+   *  149 – Intersection AOI (area-of-interest polygon)
+   *  151 – Intersection Attributes (County_Code uses 3-char code e.g. 'LA.')
+   *  305 – PM Equation Points (County uses 2-char code e.g. 'LA')
+   */
+
+  /**
+   * Resolves a county name or code to the 3-char code used by layers 123, 132, 133, and 151
+   * (e.g., "Los Angeles" → "LA.", "LA" → "LA.", "LA." → "LA.").
+   * Returns null when county is falsy.
+   * NOTE: Layer 305 (equation points) uses 2-char codes — do NOT use this helper there.
+   */
+  function normalizeCountyCode(county) {
+    if (!county) return null;
+    const code = _countyNameToCode.get(county) ?? county;
+    return code.length === 2 ? code + '.' : code;
+  }
+
+  /**
+   * Splits an array into chunks of at most `size` elements.
+   * Used to stay within the feature service's max-record-count per request.
+   */
+  function chunkArray(arr, size) {
+    const chunks = [];
+    for (let i = 0; i < arr.length; i += size) {
+      chunks.push(arr.slice(i, i + size));
+    }
+    return chunks;
+  }
+
+  /**
+   * Builds a segment descriptor object from route/county/district and postmile range.
+   */
+  function makeSegment(fromPrimary, fromAlt, toPrimary, toAlt) {
+    const fromEff = fromPrimary ?? fromAlt;
+    const toEff   = toPrimary   ?? toAlt;
+    if (!fromEff || !toEff) return null;
+    const fromM = Math.min(fromEff.measure, fromAlt?.measure ?? fromEff.measure);
+    const toM   = Math.max(toEff.measure,   toAlt?.measure   ?? toEff.measure);
+    return { fromBest: { routeId: fromEff.routeId, measure: fromM },
+             toBest:   { routeId: toEff.routeId,   measure: toM   } };
   }
 
   function setAuthUI(authenticated) {
@@ -1729,16 +1779,6 @@ async function loadCountyCodeDomain() {
 
       // Build a segment using the most inclusive From/To measures across both pmSuffix variants.
       // Alt substitutes for primary when primary is null (e.g. only L-pmSuffix translates on that alignment).
-      function makeSegment(fromPrimary, fromAlt, toPrimary, toAlt) {
-        const fromEff = fromPrimary ?? fromAlt;
-        const toEff   = toPrimary   ?? toAlt;
-        if (!fromEff || !toEff) return null;
-        const fromM = Math.min(fromEff.measure, fromAlt?.measure ?? fromEff.measure);
-        const toM   = Math.max(toEff.measure,   toAlt?.measure   ?? toEff.measure);
-        return { fromBest: { routeId: fromEff.routeId, measure: fromM },
-                 toBest:   { routeId: toEff.routeId,   measure: toM   } };
-      }
-
       const segments = [
         makeSegment(fromBestR, fromAltV?.bestR, toBestR, toAltV?.bestR),
         makeSegment(fromBestL, fromAltV?.bestL, toBestL, toAltV?.bestL)
@@ -1822,6 +1862,7 @@ async function loadCountyCodeDomain() {
   // queryAttributeSet, queryRangeLayer, and translateToOD are used by both
   // the TSAR: Ramp Detail and HSL report pipelines.
 
+  /** Queries ramp point events from layers 132, 123 (via shared pipeline), and 151 for the given measure segments. */
   async function queryAttributeSet(segments, district = null, county = null) {
     // Build one OR clause per segment (each segment is one alignment: R or L)
     // Small epsilon on both bounds absorbs floating-point drift from translate API
@@ -1833,8 +1874,7 @@ async function loadCountyCodeDomain() {
 
     const dateFilter     = getDateFilter();
     const districtFilter = district != null ? ` AND District = ${parseInt(district, 10)}` : '';
-    const rawCounty      = county ? (_countyNameToCode.get(county) ?? county) : null;
-    const resolvedCounty = rawCounty && rawCounty.length === 2 ? rawCounty + '.' : rawCounty;
+    const resolvedCounty = normalizeCountyCode(county);
     const countyFilter   = resolvedCounty != null ? ` AND County = '${resolvedCounty.replace(/'/g, "''")}'` : '';
     const where = segClauses.length === 1
       ? segClauses[0].slice(1, -1) + districtFilter + countyFilter + ' AND LRSToDate IS NULL' + dateFilter
@@ -1930,8 +1970,7 @@ async function loadCountyCodeDomain() {
       const rampDesignMap = new Map();
       if (allPairs.length === 0) return { descMap, area4Map, onOffMap, rampDesignMap };
       const CHUNK = 100;
-      const chunks = [];
-      for (let i = 0; i < allPairs.length; i += CHUNK) chunks.push(allPairs.slice(i, i + CHUNK));
+      const chunks = chunkArray(allPairs, CHUNK);
       const allDescFeatures = (await Promise.all(chunks.map(async chunk => {
         const inList = chunk.map(p => `'${p.name.replace(/'/g, "''")}'`).join(', ');
         const body = new URLSearchParams({
@@ -2020,8 +2059,7 @@ async function loadCountyCodeDomain() {
   // _S records fall back to _P routeId — layers 116/74 only carry _P alignments
   async function queryRangeLayer(pairs, layerNum, fieldName) {
     const CHUNK = 100;
-    const chunks = [];
-    for (let i = 0; i < pairs.length; i += CHUNK) chunks.push(pairs.slice(i, i + CHUNK));
+    const chunks = chunkArray(pairs, CHUNK);
 
     const allFeatures = (await Promise.all(chunks.map(async chunk => {
       const orClauses = chunk.map(p => {
@@ -2094,8 +2132,7 @@ async function loadCountyCodeDomain() {
 
     // Query layer 157 spatially using bounding envelope of each chunk's ramp geometries
     const CHUNK = 50;
-    const chunks = [];
-    for (let i = 0; i < pairs.length; i += CHUNK) chunks.push(pairs.slice(i, i + CHUNK));
+    const chunks = chunkArray(pairs, CHUNK);
 
     const allFeatures = (await Promise.all(chunks.map(async chunk => {
       const withGeo = chunk.filter(p => p.x != null && p.y != null);
@@ -2378,13 +2415,6 @@ async function loadCountyCodeDomain() {
     });
   }
 
-  function copyVal(btn, text) {
-    navigator.clipboard.writeText(text).then(() => {
-      btn.classList.add('copied');
-      setTimeout(() => btn.classList.remove('copied'), 1500);
-    });
-  }
-
   // Formats a numeric measure as NNN.NNN (3 digits each side of decimal)
   function formatDate(ts) {
     const d = new Date(ts);
@@ -2519,6 +2549,7 @@ async function loadCountyCodeDomain() {
 
   // ── HSL: Query landmarks (layer 123) ─────────────────────────────────────
 
+  /** Queries landmark point events from layer 123 for the given measure segments. */
   async function queryLandmarks(segments, routeSuffix, district = null, county = null) {
     const segClauses = segments.map(({ fromBest, toBest }) => {
       const fromM    = Math.min(fromBest.measure, toBest.measure) - 0.005;
@@ -2536,9 +2567,8 @@ async function loadCountyCodeDomain() {
       : ` AND (RouteSuffix IS NULL OR RouteSuffix <> 'S')`;
     const dateFilter     = getDateFilter();
     const districtFilter = district != null ? ` AND District = ${parseInt(district, 10)}` : '';
-    const rawCountyL      = county ? (_countyNameToCode.get(county) ?? county) : null;
-    const resolvedCountyL = rawCountyL && rawCountyL.length === 2 ? rawCountyL + '.' : rawCountyL;
-    const countyFilter    = resolvedCountyL != null ? ` AND County = '${resolvedCountyL.replace(/'/g, "''")}'` : '';
+    const resolvedCounty = normalizeCountyCode(county);
+    const countyFilter    = resolvedCounty != null ? ` AND County = '${resolvedCounty.replace(/'/g, "''")}'` : '';
     const where = uniqueClauses.length === 1
       ? uniqueClauses[0].slice(1, -1) + suffixFilter + districtFilter + countyFilter + ' AND LRSToDate IS NULL' + dateFilter
       : `(${uniqueClauses.join(' OR ')})${suffixFilter}${districtFilter}${countyFilter} AND LRSToDate IS NULL${dateFilter}`;
@@ -2610,6 +2640,7 @@ async function loadCountyCodeDomain() {
 
   // ── HSL: Query route breaks (layer 133) ───────────────────────────────────
 
+  /** Queries route break point events from layer 133 for the given measure segments. */
   async function queryRouteBreaks(segments, routeSuffix, district = null, county = null) {
     const segClauses = segments.map(({ fromBest, toBest }) => {
       const fromM    = Math.min(fromBest.measure, toBest.measure) - 0.005;
@@ -2627,9 +2658,8 @@ async function loadCountyCodeDomain() {
       : ` AND (RouteSuffix IS NULL OR RouteSuffix <> 'S')`;
     const dateFilter     = getDateFilter();
     const districtFilter = district != null ? ` AND District = ${parseInt(district, 10)}` : '';
-    const rawCountyR      = county ? (_countyNameToCode.get(county) ?? county) : null;
-    const resolvedCountyR = rawCountyR && rawCountyR.length === 2 ? rawCountyR + '.' : rawCountyR;
-    const countyFilter    = resolvedCountyR != null ? ` AND County = '${resolvedCountyR.replace(/'/g, "''")}'` : '';
+    const resolvedCounty = normalizeCountyCode(county);
+    const countyFilter    = resolvedCounty != null ? ` AND County = '${resolvedCounty.replace(/'/g, "''")}'` : '';
     const where = uniqueClauses.length === 1
       ? uniqueClauses[0].slice(1, -1) + suffixFilter + districtFilter + countyFilter + ' AND LRSToDate IS NULL' + dateFilter
       : `(${uniqueClauses.join(' OR ')})${suffixFilter}${districtFilter}${countyFilter} AND LRSToDate IS NULL${dateFilter}`;
@@ -2686,6 +2716,7 @@ async function loadCountyCodeDomain() {
 
   // ── HSL: Query equation points (layer 305) ────────────────────────────────
 
+  /** Queries PM equation points from layer 305. Note: layer 305 uses 2-char county codes (e.g. 'LA'), not 3-char. */
   async function queryEquationPoints(segments, district = null, county = null) {
     const segClauses = segments.map(({ fromBest, toBest }) => {
       const fromM = Math.min(fromBest.measure, toBest.measure) - 0.005;
@@ -2777,10 +2808,25 @@ async function loadCountyCodeDomain() {
 
   // ── HSL: Query intersections (layers 0, 149, 151, g2m, translate) ─────────
 
+  /**
+   * Queries intersections for the given route segments using one of two paths:
+   *
+   * Path 1 — Geometry (district=null AND county=null):
+   *   Converts measure segments to route polyline geometry (measureToGeometry),
+   *   spatially queries layer 0 for intersection points, filters by layer 149 AOI,
+   *   then looks up intersection attributes in layer 151.
+   *
+   * Path 2 — Direct SQL (district OR county is provided):
+   *   Delegates to queryIntersectionsByDistrict which queries layer 151 directly
+   *   using SQL filters (District_Code / County_Code / RouteNum), then resolves
+   *   geometry via layer 0 and measures via geometryToMeasure.
+   */
   async function queryIntersections(segments, routeNum, district = null, county = null) {
+    // Path 2: district or county filter — skip geometry net, query layer 151 directly
     if (district != null || county != null) {
       return await queryIntersectionsByDistrict(segments, routeNum, district, county);
     }
+    // Path 1: no spatial filter — cast a geometry net over the whole route
     try {
       const rnMatch        = String(routeNum).match(/^(\d+)([A-Z]?)$/);
       const routeNumDigits = rnMatch ? rnMatch[1].padStart(3, '0') : String(routeNum).padStart(3, '0');
@@ -2840,8 +2886,7 @@ async function loadCountyCodeDomain() {
         f:     'json',
         token: _token
       });
-      const idChunks = [];
-      for (let i = 0; i < idList.length; i += INT_CHUNK) idChunks.push(idList.slice(i, i + INT_CHUNK));
+      const idChunks = chunkArray(idList, INT_CHUNK);
       const dateFilter = getDateFilter('Int_Geometry_Begin_Date', 'Int_Geometry_End_Date');
       const [aoiFeatures, g2mData] = await Promise.all([
         Promise.all(idChunks.map(chunk => {
@@ -2881,8 +2926,7 @@ async function loadCountyCodeDomain() {
       });
       if (idToMeasure.size === 0) return { pairs: [], unresolved: [] };
       const measuredIds  = Array.from(idToMeasure.keys());
-      const detailChunks = [];
-      for (let i = 0; i < measuredIds.length; i += INT_CHUNK) detailChunks.push(measuredIds.slice(i, i + INT_CHUNK));
+      const detailChunks = chunkArray(measuredIds, INT_CHUNK);
       const outFields151 = 'INTERSECTION_ID,Intersection_Name,County_Code,District_Code,Main_RouteNum,Main_RouteSuffix,Main_PMPrefix,Main_PMSuffix,Main_PMMeasure,Main_Alignment,Cross_RouteNum,Cross_RouteSuffix,Cross_PMPrefix,Cross_PMSuffix,Cross_PMMeasure,Cross_Alignment';
       const allDetailFeatures = (await Promise.all(detailChunks.map(async chunk => {
         const chunkList151 = chunk.map(id => `'${String(id).replace(/'/g, "''")}'`).join(',');
@@ -2939,8 +2983,7 @@ async function loadCountyCodeDomain() {
       if (detailMap.size === 0) return { pairs: [], unresolved: [] };
       const matchedIds  = Array.from(detailMap.keys());
       const XLATE_CHUNK = 100;
-      const xlateChunks = [];
-      for (let i = 0; i < matchedIds.length; i += XLATE_CHUNK) xlateChunks.push(matchedIds.slice(i, i + XLATE_CHUNK));
+      const xlateChunks = chunkArray(matchedIds, XLATE_CHUNK);
       const idToOdMeasure = new Map();
       await Promise.all(xlateChunks.map(async chunk => {
         const locs = chunk.map(id => {
@@ -3000,6 +3043,7 @@ async function loadCountyCodeDomain() {
     }
   }
 
+  /** Queries intersections from layer 151 directly using SQL filters (district/county/route), then resolves geometry via layer 0. */
   async function queryIntersectionsByDistrict(segments, routeNum, district, county = null) {
     try {
       const rnMatch        = String(routeNum).match(/^(\d+)([A-Z]?)$/);
@@ -3010,8 +3054,7 @@ async function loadCountyCodeDomain() {
       const INT_CHUNK    = 200;
       const outFields151 = 'INTERSECTION_ID,Intersection_Name,County_Code,District_Code,Main_RouteNum,Main_RouteSuffix,Main_PMPrefix,Main_PMSuffix,Main_PMMeasure,Main_Alignment,Cross_RouteNum,Cross_RouteSuffix,Cross_PMPrefix,Cross_PMSuffix,Cross_PMMeasure,Cross_Alignment';
       const districtClause = district != null ? `District_Code = '${String(parseInt(district, 10))}'` : null;
-      const rawCountyCode  = county ? (_countyNameToCode.get(county) ?? county) : null;
-      const countyCode     = rawCountyCode && rawCountyCode.length === 2 ? rawCountyCode + '.' : rawCountyCode;
+      const countyCode     = normalizeCountyCode(county);
       const countyClause   = countyCode ? `County_Code = '${countyCode}'` : null;
       const baseFilter     = [...[districtClause, countyClause, `LRS_DATE_RETIRE IS NULL`].filter(Boolean)].join(' AND ') + dateFilter;
       const fetch151 = async (where) => {
@@ -3069,8 +3112,7 @@ async function loadCountyCodeDomain() {
       }
       if (detailMap.size === 0) return { pairs: [], unresolved: [] };
       const idList   = Array.from(detailMap.keys());
-      const idChunks = [];
-      for (let i = 0; i < idList.length; i += INT_CHUNK) idChunks.push(idList.slice(i, i + INT_CHUNK));
+      const idChunks = chunkArray(idList, INT_CHUNK);
       const geometryMap = new Map();
       await Promise.all(idChunks.map(async chunk => {
         const chunkList = chunk.map(id => `'${String(id).replace(/'/g, "''")}'`).join(',');
@@ -3117,8 +3159,7 @@ async function loadCountyCodeDomain() {
       });
       const matchedIds  = Array.from(detailMap.keys());
       const XLATE_CHUNK = 100;
-      const xlateChunks = [];
-      for (let i = 0; i < matchedIds.length; i += XLATE_CHUNK) xlateChunks.push(matchedIds.slice(i, i + XLATE_CHUNK));
+      const xlateChunks = chunkArray(matchedIds, XLATE_CHUNK);
       const idToOdMeasure = new Map();
       await Promise.all(xlateChunks.map(async chunk => {
         const locs = chunk.map(id => {
@@ -3266,15 +3307,6 @@ async function loadCountyCodeDomain() {
       const { bestR: toBestR,   bestL: toBestL   } = toResult.value;
       const fromAltV = fromAltResult.status === 'fulfilled' ? fromAltResult.value : null;
       const toAltV   = toAltResult.status   === 'fulfilled' ? toAltResult.value   : null;
-      function makeSegment(fromPrimary, fromAlt, toPrimary, toAlt) {
-        const fromEff = fromPrimary ?? fromAlt;
-        const toEff   = toPrimary   ?? toAlt;
-        if (!fromEff || !toEff) return null;
-        const fromM = Math.min(fromEff.measure, fromAlt?.measure ?? fromEff.measure);
-        const toM   = Math.max(toEff.measure,   toAlt?.measure   ?? toEff.measure);
-        return { fromBest: { routeId: fromEff.routeId, measure: fromM },
-                 toBest:   { routeId: toEff.routeId,   measure: toM   } };
-      }
       const segments = [
         makeSegment(fromBestR, fromAltV?.bestR, toBestR, toAltV?.bestR),
         makeSegment(fromBestL, fromAltV?.bestL, toBestL, toAltV?.bestL)
@@ -3315,8 +3347,7 @@ async function loadCountyCodeDomain() {
       const descMap = new Map();
       if (rampsOnly.length === 0) return descMap;
       const CHUNK = 100;
-      const chunks = [];
-      for (let i = 0; i < rampsOnly.length; i += CHUNK) chunks.push(rampsOnly.slice(i, i + CHUNK));
+      const chunks = chunkArray(rampsOnly, CHUNK);
       const allDescFeatures = (await Promise.all(chunks.map(async chunk => {
         const inList = chunk.map(p => `'${p.name.replace(/'/g, "''")}'`).join(', ');
         const body = new URLSearchParams({
@@ -3672,8 +3703,7 @@ async function loadCountyCodeDomain() {
       const descMap = new Map();
       if (rampsOnly.length > 0) {
         const CHUNK = 100;
-        const chunks = [];
-        for (let i = 0; i < rampsOnly.length; i += CHUNK) chunks.push(rampsOnly.slice(i, i + CHUNK));
+        const chunks = chunkArray(rampsOnly, CHUNK);
         const allDescFeatures = (await Promise.all(chunks.map(async chunk => {
           const inList = chunk.map(p => `'${p.name.replace(/'/g, "''")}'`).join(', ');
           const body = new URLSearchParams({
@@ -3887,6 +3917,8 @@ async function loadCountyCodeDomain() {
   function hsl_exportToExcel() {
     if (_allResults.length === 0) return;
     const headers = ['Dist', 'County', 'City', '', 'PM', '', 'HG', 'F', 'Distance To Next Point', 'Description'];
+    // TODO: hsl_printAll and hsl_exportToExcel both call hsl_computeLengths independently.
+    // Consider sharing _hslLengths (already cached for the screen view) instead of recomputing here.
     const lengths = hsl_computeLengths(_allResults);
     const rows = _allResults.map((p, i) => {
       const length = lengths[i];
@@ -4036,16 +4068,6 @@ async function loadCountyCodeDomain() {
       const fromAltV = fromAltResult.status === 'fulfilled' ? fromAltResult.value : null;
       const toAltV   = toAltResult.status   === 'fulfilled' ? toAltResult.value   : null;
 
-      function makeSegment(fromPrimary, fromAlt, toPrimary, toAlt) {
-        const fromEff = fromPrimary ?? fromAlt;
-        const toEff   = toPrimary   ?? toAlt;
-        if (!fromEff || !toEff) return null;
-        const fromM = Math.min(fromEff.measure, fromAlt?.measure ?? fromEff.measure);
-        const toM   = Math.max(toEff.measure,   toAlt?.measure   ?? toEff.measure);
-        return { fromBest: { routeId: fromEff.routeId, measure: fromM },
-                 toBest:   { routeId: toEff.routeId,   measure: toM   } };
-      }
-
       const segments = [
         makeSegment(fromBestR, fromAltV?.bestR, toBestR, toAltV?.bestR),
         makeSegment(fromBestL, fromAltV?.bestL, toBestL, toAltV?.bestL)
@@ -4150,8 +4172,7 @@ async function loadCountyCodeDomain() {
   async function rs_queryOnOff(allPairs) {
     const CHUNK = 100;
     const names = allPairs.map(p => p.name).filter(Boolean);
-    const chunks = [];
-    for (let i = 0; i < names.length; i += CHUNK) chunks.push(names.slice(i, i + CHUNK));
+    const chunks = chunkArray(names, CHUNK);
 
     const allFeatures = (await Promise.all(chunks.map(async chunk => {
       const inList = chunk.map(n => `'${n.replace(/'/g, "''")}'`).join(',');
