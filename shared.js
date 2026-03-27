@@ -463,6 +463,12 @@ async function loadCountyCodeDomain() {
     return v ? { gdbVersion: v } : {};
   }
 
+  function historicMomentParam() {
+    const val = document.getElementById('refDate')?.value; // "YYYY-MM-DD"
+    if (!val || !/^\d{4}-\d{2}-\d{2}$/.test(val)) return {};
+    return { historicMoment: new Date(val).getTime() };
+  }
+
   function parseHashParams(hash) {
     return Object.fromEntries(new URLSearchParams(hash.replace(/^#/, '')));
   }
@@ -667,6 +673,7 @@ async function loadCountyCodeDomain() {
       ]),
       targetNetworkLayerIds: JSON.stringify([4]),
       ...versionParam(),
+      ...historicMomentParam(),
       f:     'json',
       token: _token
     });

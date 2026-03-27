@@ -204,6 +204,7 @@
           locations:             JSON.stringify(locs),
           targetNetworkLayerIds: JSON.stringify([5]),
           ...versionParam(),
+          ...historicMomentParam(),
           f:     'json',
           token: _token
         });
@@ -506,6 +507,7 @@
           locations:             JSON.stringify(locs),
           targetNetworkLayerIds: JSON.stringify([5]),
           ...versionParam(),
+          ...historicMomentParam(),
           f:     'json',
           token: _token
         });
@@ -694,6 +696,7 @@
           locations:             JSON.stringify(locs),
           targetNetworkLayerIds: JSON.stringify([5]),
           ...versionParam(),
+          ...historicMomentParam(),
           f:     'json',
           token: _token
         });
