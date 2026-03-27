@@ -172,7 +172,7 @@
     const features = data.features;
     if (!Array.isArray(features)) return [];
     if (data.exceededTransferLimit) console.warn('[queryRouteBreaks] exceededTransferLimit — results truncated.');
-    return features.map(f => {
+    const pairs = features.map(f => {
       const a = f.attributes ?? {};
       return {
         type:        'routebreak',
@@ -191,6 +191,38 @@
         endDate:     a.InventoryItemEndDate   ?? null
       };
     });
+
+    // For any route break missing an OD measure, translate AR → OD to fill it in.
+    const missing = pairs.filter(p => p.odMeasure === '' && p.routeId && p.arMeasure != null);
+    if (missing.length > 0) {
+      const CHUNK = 200;
+      const chunks = [];
+      for (let i = 0; i < missing.length; i += CHUNK) chunks.push(missing.slice(i, i + CHUNK));
+      await Promise.all(chunks.map(async chunk => {
+        const locs = chunk.map(p => ({ routeId: p.routeId, measure: p.arMeasure }));
+        const xlateBody = new URLSearchParams({
+          locations:             JSON.stringify(locs),
+          targetNetworkLayerIds: JSON.stringify([5]),
+          ...versionParam(),
+          f:     'json',
+          token: _token
+        });
+        const xlateData = await fetch(
+          `${CONFIG.mapServiceUrl}/exts/LRServer/networkLayers/4/translate`,
+          { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: xlateBody.toString() }
+        ).then(r => r.json()).catch(() => ({ locations: [] }));
+        (xlateData.locations ?? []).forEach((loc, idx) => {
+          const xlated     = loc.translatedLocations ?? [];
+          const rbRouteNum = chunk[idx].routeId?.match(/\d{3}/)?.[0];
+          const result = xlated.find(r => r.measure != null && rbRouteNum && r.routeId?.includes(rbRouteNum))
+                      ?? xlated.find(r => r.measure != null)
+                      ?? xlated[0];
+          if (result?.measure != null) chunk[idx].odMeasure = String(result.measure);
+        });
+      }));
+    }
+
+    return pairs;
   }
 
   // ── HSL: Query equation points (layer 305) ────────────────────────────────
@@ -973,7 +1005,8 @@
          <span style="justify-self:start;">${p.pmSuffix === 'E' ? 'E' : ''}</span>
          ${hgAndF}
          ${isEq1 ? '' : `<span style="display:block;text-align:center;">${p.isCross ? '*P*' : p.featureType !== 'R' && p.featureType !== 'I' && length !== '' ? padMeasure(length) : ''}</span>`}
-         ${isEq1 ? '' : `<span>${p.desc ? esc(p.desc) : ''}</span>`}
+         ${isEq1 ? '' : `<span style="text-align:left;">${p.desc ? esc(p.desc) : ''}</span>`}
+         <span style="color:#999;font-size:0.8em;">${p.odMeasure ? esc(parseFloat(p.odMeasure).toFixed(3)) : ''}</span>
        </li>`;
   }
 
@@ -994,8 +1027,9 @@
         : `<td>${p.pmSuffix === 'L' ? 'L' : p.hwyGroup ? esc(p.hwyGroup) : ''}</td>
            <td>${p.featureType ? esc(p.featureType) : ''}</td>
            <td style="text-align:center">${distToNext}</td>
-           <td>${p.desc ? esc(p.desc) : ''}</td>`
+           <td style="text-align:left">${p.desc ? esc(p.desc) : ''}</td>`
       }
+      <td style="color:#999;font-size:0.8em;">${p.odMeasure ? esc(parseFloat(p.odMeasure).toFixed(3)) : ''}</td>
     </tr>`;
   }
 
@@ -1037,6 +1071,7 @@
          <span style="padding-left:4ch">F</span>
          <span style="padding-left:5ch">DISTANCE TO<br>NEXT POINT</span>
          <span style="padding-left:5ch">Description</span>
+         <span style="padding-left:2ch">Odometer</span>
        </div>`;
     const lengths = _hslLengths ?? hsl_computeLengths(_allResults);
     const items = pageSlice.map((p, i) => hsl_renderItem(p, start + i, lengths)).join('');
@@ -1129,7 +1164,8 @@
            <col style="width:2%">
            <col style="width:4%">
            <col style="width:13%">
-           <col style="width:47%">
+           <col style="width:38%">
+           <col style="width:9%">
          </colgroup>
          <thead>
            <tr>
@@ -1143,6 +1179,7 @@
              <th>F</th>
              <th>Distance to<br>Next Point</th>
              <th>Description</th>
+             <th>Odometer</th>
            </tr>
          </thead>
          <tbody>${rows}</tbody>

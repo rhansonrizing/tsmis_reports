@@ -564,10 +564,17 @@ async function loadCountyCodeDomain() {
     });
 
     main.sort((a, b) => {
-      const diff = parseFloat(a.odMeasure) - parseFloat(b.odMeasure);
+      const aOd = parseFloat(a.odMeasure);
+      const bOd = parseFloat(b.odMeasure);
+      // Treat missing OD as Infinity so NaN records don't break comparator
+      // consistency (which corrupts TimSort for all nearby records).
+      const aVal = isNaN(aOd) ? Infinity : aOd;
+      const bVal = isNaN(bOd) ? Infinity : bOd;
+      const diff = aVal - bVal;
       if (Math.abs(diff) > 0.001) return diff;
-      // At the same OD position, place equation points (pmSuffix='E') after
-      // all other records so physical landmarks appear before the back-equation.
+      // At the same OD position: route breaks first, equation points last.
+      if (a.type === 'routebreak' && b.type !== 'routebreak') return -1;
+      if (a.type !== 'routebreak' && b.type === 'routebreak') return 1;
       if (a.pmSuffix === 'E' && b.pmSuffix !== 'E') return 1;
       if (a.pmSuffix !== 'E' && b.pmSuffix === 'E') return -1;
       return 0;
