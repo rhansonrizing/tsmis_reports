@@ -181,7 +181,9 @@ async function loadCountyCodeDomain() {
 
   function selectMode(mode) {
     resetModeSelections();
-    const isHSL = document.getElementById('reportSelect').value === 'highway_sequence';
+    const report = document.getElementById('reportSelect').value;
+    const isHSL  = report === 'highway_sequence';
+    const isHL   = report === 'highway_log';
     document.getElementById('appForm').style.display              = mode === 'routeMeasure' ? 'block' : 'none';
     document.getElementById('controlsGrid').style.display         = 'grid';
     const showDR = mode === 'districtRoute';
@@ -191,8 +193,8 @@ async function loadCountyCodeDomain() {
     document.getElementById('districtRouteBtn').style.display     = showDR ? 'inline-block' : 'none';
     if (showDR) document.getElementById('districtRouteBtn').disabled = true;
     document.getElementById('generateRow').style.display          = showDR ? 'flex' : 'none';
-    document.getElementById('onOffSection').style.display         = showDR && !isHSL ? 'flex' : 'none';
-    if (isHSL) {
+    document.getElementById('onOffSection').style.display         = showDR && !isHSL && !isHL ? 'flex' : 'none';
+    if (isHSL || isHL) {
       document.getElementById('translateOnOffRow').style.display  = 'none';
     } else {
       document.getElementById('translateOnOffRow').style.display  = '';
@@ -368,6 +370,7 @@ async function loadCountyCodeDomain() {
   async function runDistrictRouteMode() {
     if (document.getElementById('reportSelect').value === 'highway_sequence') { await hsl_runDistrictRouteMode(); return; }
     if (document.getElementById('reportSelect').value === 'Ramp_Summary')     { await rs_runDistrictRouteMode(); return; }
+    if (document.getElementById('reportSelect').value === 'highway_log')      { await hl_runDistrictRouteMode(); return; }
     if (!tokenIsValid()) { login(); return; }
 
     const district = document.getElementById('districtSelect').value || null; // null = ALL
@@ -699,6 +702,7 @@ async function loadCountyCodeDomain() {
   async function runTranslate() {
     if (document.getElementById('reportSelect').value === 'highway_sequence') { await hsl_runTranslate(); return; }
     if (document.getElementById('reportSelect').value === 'Ramp_Summary')     { await rs_runTranslate(); return; }
+    if (document.getElementById('reportSelect').value === 'highway_log')      { await hl_runTranslate(); return; }
     if (!tokenIsValid()) { login(); return; }
 
     const from = readSection('from');

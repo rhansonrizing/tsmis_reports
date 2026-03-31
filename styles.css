@@ -751,6 +751,73 @@
     }
     .modal-no:hover { background: #004abc; color: #fff; }
 
+    /* ── Highway Log ──────────────────────────────────────────────────────── */
+    .hl-title-gap { height: 2lh; }
+    .hl-table-wrap {
+      overflow-x: auto;
+      margin-top: 0.5rem;
+    }
+    .hl-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.72rem;
+    }
+    .hl-table th {
+      font-size: 0.62rem;
+      text-align: center;
+      font-weight: 700;
+      color: #9ca3af;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      padding: 0.15rem 0.15rem;
+      vertical-align: bottom;
+    }
+    .hl-th-group {
+      border-bottom: 1px solid #e5e7eb;
+      vertical-align: middle;
+    }
+    .hl-th-stacked {
+      vertical-align: middle;
+      line-height: 1.4;
+    }
+    .hl-th-loc {
+      text-align: left;
+    }
+    .hl-table tbody {
+      border-top: 2px solid #374151;
+    }
+    .hl-table td {
+      padding: 0.1rem 0.12rem;
+      text-align: center;
+      vertical-align: middle;
+      color: #374151;
+    }
+    .hl-shaded { background: #e9ebed; }
+    .hl-dcr-row td {
+      font-weight: 700;
+      font-size: 1.2rem;
+      color: #111827;
+      text-align: center;
+      padding: 0.35rem 0.5rem 0.2rem;
+      letter-spacing: 0.04em;
+      border-top: 2px solid #d1d5db;
+    }
+    .hl-dcr-first td { border-top: none; }
+    .hl-dcr-spacer td { height: 0.6rem; padding: 0; }
+    .hl-desc-row td {
+      font-style: italic;
+      color: #374151;
+      font-size: 0.75rem;
+      text-align: left;
+      padding: 0 0.25rem 0.2rem 1.5rem;
+    }
+    .hl-empty {
+      text-align: center;
+      color: #9ca3af;
+      font-style: italic;
+      padding: 1rem;
+    }
+
     /* ── HSL: Print table (thead repeats on each page) ──────────────────── */
     .hsl-print-table {
       width: 100%;
