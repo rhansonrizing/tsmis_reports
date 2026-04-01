@@ -95,7 +95,7 @@
 
   // Returns a Map of name → fieldName value for range-based event layers (e.g. 116, 74)
   // _S records fall back to _P routeId — layers 116/74 only carry _P alignments
-  async function queryRangeLayer(pairs, layerNum, fieldName) {
+  async function queryRangeLayer(pairs, layerNum, fieldName, fromField = 'FromARMeasure', toField = 'ToARMeasure') {
     const CHUNK = 100;
     const chunks = chunkArray(pairs, CHUNK);
 
@@ -106,11 +106,11 @@
         // the main alignment and avoids the _S→_P translation mismatch that can
         // place a feature inside the wrong highway-group / city-code segment.
         const m = (p.odMeasure !== '' && p.odMeasure != null) ? parseFloat(p.odMeasure) : p.arMeasure;
-        return `(RouteID = '${rid}' AND FromARMeasure <= ${m} AND ToARMeasure >= ${m})`;
+        return `(RouteID = '${rid}' AND ${fromField} <= ${m} AND ${toField} >= ${m})`;
       }).join(' OR ');
       const body = new URLSearchParams({
         where:          `(${orClauses})${getDateFilter()}`,
-        outFields:      `RouteID,FromARMeasure,ToARMeasure,${fieldName}`,
+        outFields:      `RouteID,${fromField},${toField},${fieldName}`,
         returnGeometry: 'false',
         ...versionParam(),
         f:              'json',
@@ -147,15 +147,15 @@
       const m = (p.odMeasure !== '' && p.odMeasure != null) ? parseFloat(p.odMeasure) : p.arMeasure;
       const candidates = byRoute.get(lookupId) ?? [];
       const matches = candidates.filter(f => {
-        const from = f.attributes?.FromARMeasure;
-        const to   = f.attributes?.ToARMeasure;
+        const from = f.attributes?.[fromField];
+        const to   = f.attributes?.[toField];
         return from != null && to != null && m >= from && m <= to;
       });
       // When multiple ranges share the same boundary point, prefer the one whose
-      // FromARMeasure is highest — i.e. the range that *starts* at the boundary
+      // from-measure is highest — i.e. the range that *starts* at the boundary
       // rather than the range that merely *ends* there.
       const match = matches.length > 1
-        ? matches.reduce((best, f) => f.attributes.FromARMeasure > best.attributes.FromARMeasure ? f : best)
+        ? matches.reduce((best, f) => f.attributes[fromField] > best.attributes[fromField] ? f : best)
         : matches[0];
       map.set(p.name, match?.attributes?.[fieldName] ?? '');
     }
@@ -284,8 +284,8 @@
     const nextDis = page === totalPages - 1 ? 'disabled' : '';
 
     const routeLine3  = _routeLabel ? `Route: ${esc(_routeLabel)}&emsp;&emsp;&emsp;Direction: ${esc(_directionFrom)} &ndash; ${esc(_directionTo)}` : '';
-    const pagination  = renderActionBar('TASAS Selective Record Retrieval', 'TSAR - Ramp Detail', routeLine3, 'exportToExcel()', 'printAll()') +
-      `<div class="ramp-pagination">
+    const actionBar       = renderActionBar('TASAS Selective Record Retrieval', 'TSAR - Ramp Detail', routeLine3, 'exportToExcel()', 'printAll()');
+    const paginationBtns  = `<div class="ramp-pagination">
          <div class="pagination-left">
            <div style="display:flex;">
              <button class="page-arrow" ${prevDis} onclick="changePageFirst()">&#9664;&#9664;</button>
@@ -325,5 +325,6 @@
 
     const generatedFooter = `<div class="generated-on">Generated on ${esc(_generatedOn)}</div>`;
 
-    box.innerHTML = `${pagination}${header}<ul class="ramp-list">${items}</ul>${pageFooter}${generatedFooter}`;
+    box.innerHTML = `${actionBar}${header}<ul class="ramp-list">${items}</ul>${pageFooter}${paginationBtns}${generatedFooter}`;
+    box.scrollIntoView({ behavior: 'instant', block: 'start' });
   }

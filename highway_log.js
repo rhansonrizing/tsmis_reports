@@ -7,7 +7,43 @@
   let _hl_directionFrom = '';
   let _hl_directionTo   = '';
 
-  const HL_PAGE_SIZE = 25;
+  const HL_ROWS_PER_PAGE = 34;
+
+  // After an OD sort, group consecutive R/L pmSuffix records so that all R
+  // records in a section come before all L records.
+  // City/district markers are separated out first so they don't break section
+  // detection, then re-inserted at their natural OD positions afterward.
+  function hl_groupByAlignment(sorted) {
+    const _mTypes  = new Set(['citybegin', 'cityend', 'districtbegin', 'districtend']);
+    const odOf     = p => { const v = parseFloat(p.odMeasure); return isNaN(v) ? parseFloat(p.arMeasure ?? 0) : v; };
+    const markers  = sorted.filter(p =>  _mTypes.has(p.type));
+    const nonMarks = sorted.filter(p => !_mTypes.has(p.type));
+
+    // Group non-marker records: R then L within each consecutive R/L section.
+    const grouped = [];
+    let i = 0;
+    while (i < nonMarks.length) {
+      if (nonMarks[i].pmSuffix === 'R' || nonMarks[i].pmSuffix === 'L') {
+        const j = i++;
+        while (i < nonMarks.length && (nonMarks[i].pmSuffix === 'R' || nonMarks[i].pmSuffix === 'L')) i++;
+        const section = nonMarks.slice(j, i);
+        grouped.push(...section.filter(p => p.pmSuffix === 'R'));
+        grouped.push(...section.filter(p => p.pmSuffix === 'L'));
+      } else {
+        grouped.push(nonMarks[i++]);
+      }
+    }
+
+    // Re-insert markers at their natural OD position.
+    const result = [];
+    let mi = 0;
+    for (let gi = 0; gi <= grouped.length; gi++) {
+      const nextOD = gi < grouped.length ? odOf(grouped[gi]) : Infinity;
+      while (mi < markers.length && odOf(markers[mi]) <= nextOD) result.push(markers[mi++]);
+      if (gi < grouped.length) result.push(grouped[gi]);
+    }
+    return result;
+  }
 
   // ── HL: Range-layer lookup on the _S (secondary) alignment ───────────────────
   // Like queryRangeLayer but routes _P → _S so Left Roadbed features resolve.
@@ -194,6 +230,109 @@
     return pairs;
   }
 
+  // ── HL: Ramp point records (layer 132) ───────────────────────────────────────
+
+  async function hl_queryRampPoints(segments, routeSuffix, district = null, county = null) {
+    const segClauses = segments.map(({ fromBest, toBest }) => {
+      const fromM    = Math.min(fromBest.measure, toBest.measure) - 0.005;
+      const toM      = Math.max(fromBest.measure, toBest.measure) + 0.005;
+      const routeNum = fromBest.routeId.match(/\d{3}/)?.[0] ?? null;
+      return routeNum
+        ? `(RouteNum = '${routeNum}' AND ARMeasure >= ${fromM} AND ARMeasure <= ${toM})`
+        : `(RouteID = '${fromBest.routeId}' AND ARMeasure >= ${fromM} AND ARMeasure <= ${toM})`;
+    });
+    const uniqueClauses = [...new Set(segClauses)];
+    const safeSuffix   = ['.', 'S', 'U', 'R', 'L'].includes(routeSuffix) ? routeSuffix : '.';
+    const isSuffix     = safeSuffix !== '.';
+    const suffixFilter = isSuffix
+      ? ` AND RouteSuffix = '${safeSuffix}'`
+      : ` AND (RouteSuffix IS NULL OR RouteSuffix <> 'S')`;
+    const dateFilter     = getDateFilter();
+    const districtFilter = district != null ? ` AND District = ${parseInt(district, 10)}` : '';
+    const resolvedCounty = normalizeCountyCode(county);
+    const countyFilter   = resolvedCounty != null ? ` AND County = '${resolvedCounty.replace(/'/g, "''")}'` : '';
+    const where = uniqueClauses.length === 1
+      ? uniqueClauses[0].slice(1, -1) + suffixFilter + districtFilter + countyFilter + ' AND LRSToDate IS NULL' + dateFilter
+      : `(${uniqueClauses.join(' OR ')})${suffixFilter}${districtFilter}${countyFilter} AND LRSToDate IS NULL${dateFilter}`;
+    const body = new URLSearchParams({
+      where,
+      outFields:      'Ramp_Name,RouteID,ARMeasure,County,RouteSuffix,PMPrefix,PMSuffix,PMMeasure,ODMeasure,District,InventoryItemStartDate,InventoryItemEndDate',
+      orderByFields:  'ARMeasure ASC',
+      returnGeometry: 'false',
+      ...versionParam(),
+      f:              'json',
+      token:          _token
+    });
+    let resp, data;
+    try {
+      resp = await fetch(`${CONFIG.mapServiceUrl}/132/query`, {
+        method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString()
+      });
+      data = await resp.json();
+    } catch (e) {
+      console.error('[hl_queryRampPoints] error:', e.message);
+      return [];
+    }
+    if (data.error) {
+      const code = data.error.code;
+      if (code === 498 || code === 499) { _token = null; login(); return []; }
+      console.error(`[hl_queryRampPoints] API error ${code}: ${data.error.message}`);
+      return [];
+    }
+    const features = data.features;
+    if (!Array.isArray(features)) return [];
+    if (data.exceededTransferLimit) console.warn('[hl_queryRampPoints] exceededTransferLimit — results truncated.');
+    const pairs = features.map(f => {
+      const a = f.attributes ?? {};
+      return {
+        type:        'ramp',
+        name:        `rp_${a.RouteID}_${a.ARMeasure}_${a.Ramp_Name ?? ''}`,
+        desc:        '',
+        routeId:     a.RouteID,
+        arMeasure:   a.ARMeasure,
+        county:      a.County      ?? '',
+        routeSuffix: a.RouteSuffix ?? '',
+        pmPrefix:    a.PMPrefix    ?? '',
+        pmSuffix:    a.PMSuffix    ?? '.',
+        pmMeasure:   a.PMMeasure   ?? '',
+        odMeasure:   a.ODMeasure != null ? String(a.ODMeasure) : '',
+        district:    a.District != null ? String(a.District).padStart(2, '0') : '',
+        startDate:   a.InventoryItemStartDate ?? null,
+        endDate:     a.InventoryItemEndDate   ?? null
+      };
+    });
+    const missing = pairs.filter(p => p.odMeasure === '' && p.routeId && p.arMeasure != null);
+    if (missing.length > 0) {
+      const CHUNK = 200;
+      const chunks = [];
+      for (let i = 0; i < missing.length; i += CHUNK) chunks.push(missing.slice(i, i + CHUNK));
+      await Promise.all(chunks.map(async chunk => {
+        const locs = chunk.map(p => ({ routeId: p.routeId, measure: p.arMeasure }));
+        const xlateBody = new URLSearchParams({
+          locations:             JSON.stringify(locs),
+          targetNetworkLayerIds: JSON.stringify([5]),
+          ...versionParam(),
+          ...historicMomentParam(),
+          f:     'json',
+          token: _token
+        });
+        const xlateData = await fetch(
+          `${CONFIG.mapServiceUrl}/exts/LRServer/networkLayers/4/translate`,
+          { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: xlateBody.toString() }
+        ).then(r => r.json()).catch(() => ({ locations: [] }));
+        (xlateData.locations ?? []).forEach((loc, idx) => {
+          const xlated     = loc.translatedLocations ?? [];
+          const rpRouteNum = chunk[idx].routeId?.match(/\d{3}/)?.[0];
+          const result = xlated.find(r => r.measure != null && rpRouteNum && r.routeId?.includes(rpRouteNum))
+                      ?? xlated.find(r => r.measure != null)
+                      ?? xlated[0];
+          if (result?.measure != null) chunk[idx].odMeasure = String(result.measure);
+        });
+      }));
+    }
+    return pairs;
+  }
+
   // ── HL: ADT lookup (layer 153, filtered to AADT_YEAR = currentYear - 2) ──────
 
   async function hl_queryADT(pairs) {
@@ -277,21 +416,54 @@
     startThinking(btn);
     clearResults();
     try {
-      const [landmarkPairs, { pairs: intersectionPairs }, cityBeginPairs, districtBeginPairs, direction] = await Promise.all([
+      const [landmarkPairs, { pairs: intersectionPairs }, cityBeginPairs, districtBeginPairs, routeBreakPairs, rampPointPairs, direction] = await Promise.all([
         queryLandmarks(segments, routeSuffix, district, county),
         queryIntersections(segments, routeNum, district, county),
         queryCityBegins(segments, paddedRoute, district, county),
         hl_queryDistrictBegins(segments, paddedRoute),
+        queryRouteBreaks(segments, routeSuffix, district, county),
+        hl_queryRampPoints(segments, routeSuffix, district, county),
         queryRouteDirection(routeNum)
       ]);
       for (const p of intersectionPairs)   p.desc = '';
       for (const p of cityBeginPairs)      p.desc = '';
+      for (const p of routeBreakPairs)     p.desc = '';
       const measureOf = p => parseFloat(p.odMeasure !== '' && p.odMeasure != null ? p.odMeasure : p.arMeasure);
-      const allPairs = [...landmarkPairs, ...intersectionPairs, ...cityBeginPairs, ...districtBeginPairs].sort((a, b) => measureOf(a) - measureOf(b));
+      const allPairs = hl_groupByAlignment([...landmarkPairs, ...intersectionPairs, ...cityBeginPairs, ...districtBeginPairs, ...routeBreakPairs, ...rampPointPairs]
+        .filter(p => p.type !== 'districtend')
+        .sort((a, b) => measureOf(a) - measureOf(b)));
+      const _markerTypes = new Set(['citybegin', 'cityend', 'districtbegin', 'districtend']);
+      const _normOD = p => { if (p.odMeasure == null || p.odMeasure === '') return null; const v = parseFloat(p.odMeasure); return isNaN(v) ? null : (Math.round(v * 1000) / 1000).toFixed(3); };
+      const _nonMarkerOD = new Set(allPairs.filter(p => !_markerTypes.has(p.type) && _normOD(p) !== null).map(p => _normOD(p)));
+      const _firstNonMarkerOD = _normOD(allPairs.find(p => !_markerTypes.has(p.type)) ?? {});
+      const _rlMaxOD = Math.max(-Infinity, ...allPairs.filter(p => p.pmSuffix === 'R' || p.pmSuffix === 'L').map(p => parseFloat(_normOD(p) ?? '-Infinity')).filter(v => isFinite(v)));
+      let _prevNonMarkerDistrict = null;
+      const pairs = allPairs.filter(p => {
+        if (!_markerTypes.has(p.type)) {
+          if (p.district) _prevNonMarkerDistrict = p.district;
+          return true;
+        }
+        const od = _normOD(p);
+        if (od === null) return false;
+        // Suppress any marker before the first non-marker (route starts inside this feature)
+        if (_firstNonMarkerOD != null && parseFloat(od) < parseFloat(_firstNonMarkerOD)) return false;
+        // districtbegin: also suppress when tied with the first non-marker (never show at report start)
+        if (p.type === 'districtbegin' && od === _firstNonMarkerOD) return false;
+        // districtbegin: suppress when district hasn't changed from the preceding non-marker
+        if (p.type === 'districtbegin' && p.district && p.district === _prevNonMarkerDistrict) return false;
+        // Suppress city markers within the R/L section
+        if ((p.type === 'citybegin' || p.type === 'cityend') && isFinite(_rlMaxOD) && parseFloat(od) <= _rlMaxOD) return false;
+        // Suppress markers at the same position as any non-marker (duplicate row)
+        return !_nonMarkerOD.has(od);
+      });
+      console.log('[HL district/route] pairs after marker suppression:');
+      pairs.forEach((p, i) => console.log(`  [${i}] type=${p.type} name=${p.name} pmSuffix=|${p.pmSuffix}| pmMeasure=|${p.pmMeasure}| odMeasure=|${p.odMeasure}| district=${p.district} county=${p.county}`));
       _hl_routeLabel    = paddedRoute;
       _hl_directionFrom = direction.from;
       _hl_directionTo   = direction.to;
-      _hl_allResults    = await hl_buildResults(allPairs);
+      _hl_allResults    = await hl_buildResults(pairs);
+      console.log('[HL] final results for report:');
+      _hl_allResults.forEach((r, i) => console.log(`  [${i}] type=${r.type} location=${r.location} lengthMi=${r.lengthMi} cntyOdom=${r.cntyOdom} city=${r.city} ru=${r.ru} spd=${r.spd} ter=${r.ter} hg=${r.hg} ac=${r.ac} district=${r.district} county=${r.county} odMeasure=${r.odMeasure}`));
       _hl_currentPage   = 0;
       _hl_generatedOn   = new Date().toLocaleString();
       hl_renderPage();
@@ -337,21 +509,54 @@
       if (segments.length === 0) { hl_showResults('error', 'Translation failed.'); return; }
       const paddedRouteNum = from.routeNum.padStart(3, '0');
       const routeSuffix    = from.routeSuffix === '.' ? '' : from.routeSuffix;
-      const [landmarkPairs, { pairs: intersectionPairs }, cityBeginPairs, districtBeginPairs, direction] = await Promise.all([
+      const [landmarkPairs, { pairs: intersectionPairs }, cityBeginPairs, districtBeginPairs, routeBreakPairs, rampPointPairs, direction] = await Promise.all([
         queryLandmarks(segments, routeSuffix),
         queryIntersections(segments, from.routeNum),
         queryCityBegins(segments, paddedRouteNum),
         hl_queryDistrictBegins(segments, paddedRouteNum),
+        queryRouteBreaks(segments, routeSuffix),
+        hl_queryRampPoints(segments, routeSuffix),
         queryRouteDirection(paddedRouteNum)
       ]);
       for (const p of intersectionPairs)   p.desc = '';
       for (const p of cityBeginPairs)      p.desc = '';
+      for (const p of routeBreakPairs)     p.desc = '';
       const measureOf = p => parseFloat(p.odMeasure !== '' && p.odMeasure != null ? p.odMeasure : p.arMeasure);
-      const allPairs = [...landmarkPairs, ...intersectionPairs, ...cityBeginPairs, ...districtBeginPairs].sort((a, b) => measureOf(a) - measureOf(b));
+      const allPairs = hl_groupByAlignment([...landmarkPairs, ...intersectionPairs, ...cityBeginPairs, ...districtBeginPairs, ...routeBreakPairs, ...rampPointPairs]
+        .filter(p => p.type !== 'districtend')
+        .sort((a, b) => measureOf(a) - measureOf(b)));
+      const _markerTypes = new Set(['citybegin', 'cityend', 'districtbegin', 'districtend']);
+      const _normOD = p => { if (p.odMeasure == null || p.odMeasure === '') return null; const v = parseFloat(p.odMeasure); return isNaN(v) ? null : (Math.round(v * 1000) / 1000).toFixed(3); };
+      const _nonMarkerOD = new Set(allPairs.filter(p => !_markerTypes.has(p.type) && _normOD(p) !== null).map(p => _normOD(p)));
+      const _firstNonMarkerOD = _normOD(allPairs.find(p => !_markerTypes.has(p.type)) ?? {});
+      const _rlMaxOD = Math.max(-Infinity, ...allPairs.filter(p => p.pmSuffix === 'R' || p.pmSuffix === 'L').map(p => parseFloat(_normOD(p) ?? '-Infinity')).filter(v => isFinite(v)));
+      let _prevNonMarkerDistrict = null;
+      const pairs = allPairs.filter(p => {
+        if (!_markerTypes.has(p.type)) {
+          if (p.district) _prevNonMarkerDistrict = p.district;
+          return true;
+        }
+        const od = _normOD(p);
+        if (od === null) return false;
+        // Suppress any marker before the first non-marker (route starts inside this feature)
+        if (_firstNonMarkerOD != null && parseFloat(od) < parseFloat(_firstNonMarkerOD)) return false;
+        // districtbegin: also suppress when tied with the first non-marker (never show at report start)
+        if (p.type === 'districtbegin' && od === _firstNonMarkerOD) return false;
+        // districtbegin: suppress when district hasn't changed from the preceding non-marker
+        if (p.type === 'districtbegin' && p.district && p.district === _prevNonMarkerDistrict) return false;
+        // Suppress city markers within the R/L section
+        if ((p.type === 'citybegin' || p.type === 'cityend') && isFinite(_rlMaxOD) && parseFloat(od) <= _rlMaxOD) return false;
+        // Suppress markers at the same position as any non-marker (duplicate row)
+        return !_nonMarkerOD.has(od);
+      });
+      console.log('[HL translate] pairs after marker suppression:');
+      pairs.forEach((p, i) => console.log(`  [${i}] type=${p.type} name=${p.name} pmSuffix=|${p.pmSuffix}| pmMeasure=|${p.pmMeasure}| odMeasure=|${p.odMeasure}| district=${p.district} county=${p.county}`));
       _hl_routeLabel    = paddedRouteNum;
       _hl_directionFrom = direction.from;
       _hl_directionTo   = direction.to;
-      _hl_allResults    = await hl_buildResults(allPairs);
+      _hl_allResults    = await hl_buildResults(pairs);
+      console.log('[HL] final results for report:');
+      _hl_allResults.forEach((r, i) => console.log(`  [${i}] type=${r.type} location=${r.location} lengthMi=${r.lengthMi} cntyOdom=${r.cntyOdom} city=${r.city} ru=${r.ru} spd=${r.spd} ter=${r.ter} hg=${r.hg} ac=${r.ac} district=${r.district} county=${r.county} odMeasure=${r.odMeasure}`));
       _hl_currentPage   = 0;
       _hl_generatedOn   = new Date().toLocaleString();
       hl_renderPage();
@@ -374,7 +579,7 @@
       rbTMap, rbLnsMap, rbFMap, rbTo1Map, rbTr1Map, rbWidMap, rbTo2Map, rbTr2Map,
       adtMaps
     ] = await Promise.all([
-      queryRangeLayer(pairs, 74,  'City_Code'),
+      queryRangeLayer(pairs, 74,  'City_Code', 'BeginODMeasure', 'EndODMeasure'),
       queryRangeLayer(pairs, 125, 'Non_Add_Mileage'),
       queryRangeLayer(pairs, 130, 'Population_Code'),
       queryRangeLayer(pairs, 113, 'Design_Speed'),
@@ -429,8 +634,9 @@
     return pairs.map((p, i) => {
       const prefix = (p.pmPrefix && p.pmPrefix !== '.') ? p.pmPrefix : '';
       const suffix = (p.pmSuffix && p.pmSuffix !== '.') ? p.pmSuffix : '';
+      const pmLoc  = prefix + padMeasure(p.pmMeasure) + suffix;
       return {
-        location: prefix + padMeasure(p.pmMeasure) + suffix,
+        location: pmLoc !== '' ? pmLoc : padMeasure(p.odMeasure),
         lengthMi: distances[i]  !== '' ? padMeasure(distances[i])  : '',
         a:        naMap.get(p.name) === 1 ? 'N' : '',
         cntyOdom: countyOdoms[i] !== '' ? padMeasure(countyOdoms[i]) : '',
@@ -463,9 +669,12 @@
         adt_back: adtBackMap.get(p.name)  != null ? String(adtBackMap.get(p.name))  : '',
         adt_p:    adtCodeMap.get(p.name)  != null ? String(adtCodeMap.get(p.name))  : '',
         adt_ahead:adtAheadMap.get(p.name) != null ? String(adtAheadMap.get(p.name)) : '',
-        district: p.district ?? '',
-        county:   p.county   ?? '',
-        desc:     p.desc,
+        odMeasure: p.odMeasure ?? '',
+        district:  p.district ?? '',
+        county:    p.county   ?? '',
+        desc:      p.desc,
+        type:      p.type     ?? '',
+        pmSuffix:  p.pmSuffix ?? '.',
       };
     });
   }
@@ -489,15 +698,33 @@
     }
   }
 
+  function hl_getPageBoundaries() {
+    const pages = [];
+    let s = 0;
+    while (s < _hl_allResults.length) {
+      let rows = 0, e = s;
+      while (e < _hl_allResults.length) {
+        const rc = _hl_allResults[e].desc ? 2 : 1;
+        if (rows + rc > HL_ROWS_PER_PAGE && rows > 0) break;
+        rows += rc;
+        e++;
+      }
+      pages.push({ start: s, end: e });
+      s = e;
+    }
+    return pages;
+  }
+
   function hl_renderPage() {
     const box = document.getElementById('rampResults');
     box.style.display = 'block';
     box.className = 'ramp-results';
 
-    const totalPages = Math.ceil(_hl_allResults.length / HL_PAGE_SIZE);
-    const page  = _hl_currentPage;
-    const start = page * HL_PAGE_SIZE;
-    const slice = _hl_allResults.slice(start, start + HL_PAGE_SIZE);
+    const pages      = hl_getPageBoundaries();
+    const totalPages = pages.length;
+    const page       = _hl_currentPage;
+    const { start, end } = pages[page] ?? { start: 0, end: _hl_allResults.length };
+    const slice = _hl_allResults.slice(start, end);
 
     const prevDis = page === 0              ? 'disabled' : '';
     const nextDis = page === totalPages - 1 ? 'disabled' : '';
@@ -533,25 +760,110 @@
       ? `<div class="page-info">Page ${page + 1} of ${totalPages}</div>`
       : '';
     const generatedFooter = `<div class="generated-on">Generated on ${esc(_hl_generatedOn)}</div>`;
-    box.innerHTML = `${actionBar}<div class="hl-title-gap"></div>${pagination}${table}${pageFooter}${generatedFooter}`;
+    box.innerHTML = `${actionBar}<div class="hl-title-gap"></div>${table}${pageFooter}${pagination}${generatedFooter}`;
+    box.scrollIntoView({ behavior: 'instant', block: 'start' });
   }
 
   function hl_buildTbodyRows(slice, startIdx) {
+    const n = _hl_allResults.length;
+
+    // Fill-forward effective city and county across all results so rows with
+    // empty values (intersections, district markers, etc.) inherit their group.
+    const effCity   = new Array(n);
+    const effCounty = new Array(n);
+    let lCity = '', lCounty = '';
+    for (let j = 0; j < n; j++) {
+      const r = _hl_allResults[j];
+      // cityend marks the boundary — include this row in the city group but stop propagating after it
+      if (r.type === 'cityend') {
+        effCity[j] = r.city || lCity;
+        lCity = '';
+      } else {
+        if (r.city) lCity = r.city;
+        effCity[j] = lCity;
+      }
+      if (r.county) lCounty = r.county;
+      effCounty[j] = lCounty;
+    }
+
+    // Pre-compute mileage (last odMeasure − first odMeasure) for each contiguous group.
+    const cityInfo   = new Array(n).fill(null); // { label, dist }
+    const countyInfo = new Array(n).fill(null);
+
+    const computeGroups = (eff, info) => {
+      let s = 0;
+      while (s < n) {
+        let e = s;
+        while (e + 1 < n && eff[e + 1] === eff[s]) e++;
+        let firstOd = null, lastOd = null;
+        for (let j = s; j <= e; j++) {
+          const od = _hl_allResults[j].odMeasure;
+          if (od != null && od !== '') {
+            const v = parseFloat(od);
+            if (firstOd === null) firstOd = v;
+            lastOd = v;
+          }
+        }
+        const dist = firstOd !== null && lastOd !== null
+          ? padMeasure((lastOd - firstOd).toFixed(3)) : null;
+        for (let j = s; j <= e; j++) info[j] = { label: eff[s], dist };
+        s = e + 1;
+      }
+    };
+    computeGroups(effCity,   cityInfo);
+    computeGroups(effCounty, countyInfo);
+
     let prevDistrict = startIdx === 0 ? null : (_hl_allResults[startIdx - 1]?.district ?? null);
     let prevCounty   = startIdx === 0 ? null : (_hl_allResults[startIdx - 1]?.county   ?? null);
+
+    const isMarkerType = t => t === 'citybegin' || t === 'cityend' || t === 'districtbegin' || t === 'districtend';
+
     return slice.map((p, i) => {
-      let header = '';
-      if (p.district !== prevDistrict || p.county !== prevCounty) {
-        header = hl_renderDcrRow(p.district, p.county, _hl_routeLabel, startIdx === 0 && i === 0);
+      const gi = startIdx + i;
+      let html = '';
+      if (!isMarkerType(p.type) && (p.district !== prevDistrict || p.county !== prevCounty)) {
+        html += hl_renderDcrRow(p.district, p.county, _hl_routeLabel, startIdx === 0 && i === 0);
         prevDistrict = p.district;
         prevCounty   = p.county;
       }
-      return header + hl_renderRow(p, startIdx + i);
+      html += hl_renderRow(p, gi);
+
+      const isLastCity   = gi === n - 1 || effCity[gi + 1]   !== effCity[gi];
+      const isLastCounty = gi === n - 1 || effCounty[gi + 1] !== effCounty[gi];
+      if (isLastCity   && cityInfo[gi]?.dist   != null && cityInfo[gi].label !== ''
+          && _hl_allResults[gi].pmSuffix !== 'R' && _hl_allResults[gi].pmSuffix !== 'L')
+        html += hl_renderTotalRow('city',   cityInfo[gi].label,   cityInfo[gi].dist);
+      if (isLastCounty && countyInfo[gi]?.dist != null)
+        html += hl_renderTotalRow('county', countyInfo[gi].label, countyInfo[gi].dist);
+
+      if (gi === n - 1) {
+        let firstOd = null, lastOd = null;
+        for (let j = 0; j < n; j++) {
+          const od = _hl_allResults[j].odMeasure;
+          if (od != null && od !== '') {
+            const v = parseFloat(od);
+            if (firstOd === null) firstOd = v;
+            lastOd = v;
+          }
+        }
+        if (firstOd !== null && lastOd !== null)
+          html += hl_renderTotalRow('cumulative', 'CUMULATIVE', padMeasure((lastOd - firstOd).toFixed(3)));
+      }
+
+      return html;
     }).join('');
   }
 
+  function hl_renderTotalRow(type, label, dist) {
+    const tag       = type === 'cumulative' ? '' : (type === 'city' ? 'CITY TOTALS' : 'COUNTY TOTALS');
+    const labelText = tag ? `*** *** ${esc(label)} ${tag}` : `*** *** ${esc(label)}`;
+    return `<tr class="hl-total-row hl-total-${type}">
+      <td colspan="32"><span class="hl-total-label">${labelText}</span><span class="hl-total-mileage">(MILEAGE)&nbsp;&nbsp;&nbsp;&nbsp;TOTAL&nbsp;&nbsp;&nbsp;&nbsp;${esc(dist)}</span><br>&nbsp;</td>
+    </tr>`;
+  }
+
   function hl_changePage(delta) {
-    const totalPages = Math.ceil(_hl_allResults.length / HL_PAGE_SIZE);
+    const totalPages = hl_getPageBoundaries().length;
     const next = _hl_currentPage + delta;
     if (next < 0 || next >= totalPages) return;
     _hl_currentPage = next;
@@ -565,7 +877,7 @@
   }
 
   function hl_changePageLast() {
-    const last = Math.ceil(_hl_allResults.length / HL_PAGE_SIZE) - 1;
+    const last = hl_getPageBoundaries().length - 1;
     if (_hl_currentPage === last) return;
     _hl_currentPage = last;
     hl_renderPage();
@@ -577,7 +889,7 @@
       'LB T', 'LB Lns', 'LB F', 'LB OT', 'LB TR', 'LB T-W', 'LB IN', 'LB SH',
       'Med TCB', 'Med Wid',
       'RB T', 'RB Lns', 'RB F', 'RB IN', 'RB SH', 'RB T-W', 'RB OT', 'RB SH',
-      'ADT Back', 'ADT P', 'ADT Ahead', 'Description'];
+      'ADT Back', 'ADT P', 'ADT Ahead', 'Sig Chg./Date', 'Description'];
     const rows = _hl_allResults.map(p => [
       p.location ?? '', p.lengthMi ?? '', p.a ?? '', p.cntyOdom ?? '', p.city ?? '',
       p.ru ?? '', p.spd ?? '', p.ter ?? '', p.hg ?? '', p.ac ?? '',
@@ -587,7 +899,7 @@
       p.rb_t ?? '', p.rb_lns ?? '', p.rb_f ?? '', p.rb_to1 ?? '', p.rb_tr1 ?? '',
       p.rb_wid ?? '', p.rb_to2 ?? '', p.rb_tr2 ?? '',
       p.adt_back ?? '', p.adt_p ?? '', p.adt_ahead ?? '',
-      p.desc ?? ''
+      '', p.desc ?? ''
     ]);
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
     const wb = XLSX.utils.book_new();
@@ -608,9 +920,9 @@
   }
 
   function hl_renderDcrRow(district, county, route, isFirst) {
-    const spacer = `<tr class="hl-dcr-spacer"><td colspan="31"></td></tr>`;
+    const spacer = `<tr class="hl-dcr-spacer"><td colspan="32"></td></tr>`;
     return `${isFirst ? '' : spacer}<tr class="hl-dcr-row${isFirst ? ' hl-dcr-first' : ''}">
-      <td colspan="31">${esc(district || '\u2014')} ${esc(county || '\u2014')} ${esc(route || '\u2014')}</td>
+      <td colspan="32">${esc(district || '\u2014')} ${esc(county || '\u2014')} ${esc(route || '\u2014')}</td>
     </tr>${spacer}`;
   }
 
@@ -628,6 +940,7 @@
         <th colspan="2"  class="hl-th-group">Median</th>
         <th colspan="8"  class="hl-th-group">Right Roadbed</th>
         <th colspan="3"  class="hl-th-group">ADT Info</th>
+        <th rowspan="3"  class="hl-th-stacked">Sig<br>Chg.<br>/Date</th>
       </tr>
       <!-- Row 2: top label of each stacked column header -->
       <tr>
@@ -681,10 +994,18 @@
 
   function hl_renderRow(p, idx = 0) {
     const shade = idx % 2 === 0 ? ' hl-shaded' : '';
+    const typeClass = p.type === 'routebreak' ? ' hl-routebreak'
+                    : p.type === 'ramp'       ? ' hl-ramp'
+                    : (p.type === 'citybegin' || p.type === 'cityend' || p.type === 'districtbegin' || p.type === 'districtend') ? ' hl-marker'
+                    : '';
     const descRow = p.desc
-      ? `<tr class="hl-desc-row${shade}"><td colspan="2"></td><td colspan="29"><em>${esc(p.desc)}</em></td></tr>`
+      ? `<tr class="hl-desc-row${shade}${typeClass}"><td colspan="2"></td><td colspan="30"><em>${esc(p.desc)}</em></td></tr>`
       : '';
-    return `<tr class="hl-data-row${shade}">
+    const lbFill = p.pmSuffix === 'R' ? '+' : null;
+    const rbFill = p.pmSuffix === 'L' ? '+' : null;
+    const lb = f => lbFill ?? esc(p[f] ?? '');
+    const rb = f => rbFill ?? esc(p[f] ?? '');
+    return `<tr class="hl-data-row${shade}${typeClass}">
       <td>${esc(p.location  ?? '')}</td>
       <td>${esc(p.lengthMi  ?? '')}</td>
       <td>${esc(p.a         ?? '')}</td>
@@ -695,26 +1016,27 @@
       <td>${esc(p.ter       ?? '')}</td>
       <td>${esc(p.hg        ?? '')}</td>
       <td>${esc(p.ac        ?? '')}</td>
-      <td>${esc(p.lb_t      ?? '')}</td>
-      <td>${esc(p.lb_lns    ?? '')}</td>
-      <td>${esc(p.lb_f      ?? '')}</td>
-      <td>${esc(p.lb_to1    ?? '')}</td>
-      <td>${esc(p.lb_tr1    ?? '')}</td>
-      <td>${esc(p.lb_wid    ?? '')}</td>
-      <td>${esc(p.lb_to2    ?? '')}</td>
-      <td>${esc(p.lb_tr2    ?? '')}</td>
+      <td>${lb('lb_t'  )}</td>
+      <td>${lb('lb_lns')}</td>
+      <td>${lb('lb_f'  )}</td>
+      <td>${lb('lb_to1')}</td>
+      <td>${lb('lb_tr1')}</td>
+      <td>${lb('lb_wid')}</td>
+      <td>${lb('lb_to2')}</td>
+      <td>${lb('lb_tr2')}</td>
       <td>${esc(p.med_tcb   ?? '')}</td>
       <td>${esc(p.med_yla   ?? '')}</td>
-      <td>${esc(p.rb_t      ?? '')}</td>
-      <td>${esc(p.rb_lns    ?? '')}</td>
-      <td>${esc(p.rb_f      ?? '')}</td>
-      <td>${esc(p.rb_to1    ?? '')}</td>
-      <td>${esc(p.rb_tr1    ?? '')}</td>
-      <td>${esc(p.rb_wid    ?? '')}</td>
-      <td>${esc(p.rb_to2    ?? '')}</td>
-      <td>${esc(p.rb_tr2    ?? '')}</td>
+      <td>${rb('rb_t'  )}</td>
+      <td>${rb('rb_lns')}</td>
+      <td>${rb('rb_f'  )}</td>
+      <td>${rb('rb_to1')}</td>
+      <td>${rb('rb_tr1')}</td>
+      <td>${rb('rb_wid')}</td>
+      <td>${rb('rb_to2')}</td>
+      <td>${rb('rb_tr2')}</td>
       <td>${esc(p.adt_back  ?? '')}</td>
       <td>${esc(p.adt_p     ?? '')}</td>
       <td>${esc(p.adt_ahead ?? '')}</td>
+      <td></td>
     </tr>${descRow}`;
   }

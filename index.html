@@ -22,13 +22,25 @@
   <img src="caltranslogo.png" alt="Caltrans" class="caltrans-logo">
   <div class="page-header">
     <div class="report-select-wrap">
-      <select id="reportSelect">
+      <select id="reportSelect" style="display:none;">
         <option value="" disabled selected hidden>-- Select report --</option>
         <option value="highway_log" disabled>Highway Log</option>
         <option value="highway_sequence">Highway Sequence Listing</option>
         <option value="Ramp_Detail">TSAR: Ramp Detail</option>
         <option value="Ramp_Summary">TSAR: Ramp Summary</option>
       </select>
+      <div class="cs" id="customReport">
+        <div class="cs-trigger">
+          <span class="cs-value">-- Select report --</span>
+          <span class="cs-arrow">&#9660;</span>
+        </div>
+        <ul class="cs-list">
+          <li class="cs-option cs-disabled" data-value="highway_log">Highway Log</li>
+          <li class="cs-option" data-value="highway_sequence">Highway Sequence Listing</li>
+          <li class="cs-option" data-value="Ramp_Detail">TSAR: Ramp Detail</li>
+          <li class="cs-option" data-value="Ramp_Summary">TSAR: Ramp Summary</li>
+        </ul>
+      </div>
     </div>
   </div>
 

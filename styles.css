@@ -87,22 +87,58 @@
       border-radius: 8px;
       padding: 0.25rem 1.25rem 0.35rem;
       display: inline-block;
+      transition: box-shadow 0.15s ease;
+    }
+    .report-select-wrap:has(.cs.is-open) {
+      box-shadow: 0 4px 16px rgba(0, 52, 132, 0.35);
     }
 
-    #reportSelect {
+    .cs { position: relative; cursor: pointer; user-select: none; }
+    .cs-trigger {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .cs-value {
       font-size: 1.3rem;
       font-weight: normal;
       color: #9ca3af;
-      text-align: left;
-      border: none;
-      background: transparent;
-      cursor: pointer;
-      outline: none;
-      appearance: auto;
     }
-    #reportSelect.has-value { color: #111827; }
-    #reportSelect option { color: #111827; }
-    #reportSelect option:disabled { color: #9ca3af; }
+    .cs.has-value .cs-value { color: #111827; }
+    .cs-arrow {
+      font-size: 0.8rem;
+      color: #374151;
+      transition: transform 0.15s ease;
+    }
+    .cs.is-open .cs-arrow { transform: rotate(180deg); }
+    .cs-list {
+      display: none;
+      position: absolute;
+      top: calc(100% + 0.5rem);
+      left: 50%;
+      transform: translateX(-50%);
+      min-width: 100%;
+      white-space: nowrap;
+      background: #fff;
+      border: 2px solid #003484;
+      border-radius: 8px;
+      padding: 0.25rem 0;
+      list-style: none;
+      margin: 0;
+      box-shadow: 0 8px 24px rgba(0, 52, 132, 0.35);
+      z-index: 100;
+    }
+    .cs.is-open .cs-list { display: block; }
+    .cs-option {
+      padding: 0.4rem 1.25rem;
+      font-size: 1.3rem;
+      color: #111827;
+    }
+    .cs-option:not(.cs-disabled):hover {
+      background: #e8edf7;
+      cursor: pointer;
+    }
+    .cs-disabled { color: #9ca3af; cursor: default; }
 
     #refDate {
       width: 100%;
@@ -793,6 +829,9 @@
       color: #374151;
     }
     .hl-shaded { background: #e9ebed; }
+    .hl-routebreak td { color: #166534; }
+    .hl-ramp       td { color: #1d4ed8; }
+    .hl-marker     td { color: #991b1b; }
     .hl-dcr-row td {
       font-weight: 700;
       font-size: 1.2rem;
@@ -804,6 +843,18 @@
     }
     .hl-dcr-first td { border-top: none; }
     .hl-dcr-spacer td { height: 0.6rem; padding: 0; }
+    .hl-total-row td {
+      font-weight: 600;
+      font-size: 0.72rem;
+      text-align: left;
+      padding: 0.2rem 0.5rem;
+      border: 1px solid #374151;
+      color: #111827;
+    }
+    .hl-total-county td { border: 1px solid #374151; }
+    .hl-total-cumulative td { border: 2px solid #374151; font-size: 0.75rem; }
+    .hl-total-label   { display: inline-block; width: 33.33%; }
+    .hl-total-mileage { display: inline-block; }
     .hl-desc-row td {
       font-style: italic;
       color: #374151;

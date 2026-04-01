@@ -1174,8 +1174,8 @@
     const prevDis = page === 0              ? 'disabled' : '';
     const nextDis = page === totalPages - 1 ? 'disabled' : '';
     const routeLine3 = _routeLabel ? `Route: ${esc(_routeLabel)}&emsp;&emsp;&emsp;Direction: ${esc(_directionFrom)} &ndash; ${esc(_directionTo)}` : '';
-    const pagination = renderActionBar('California Department of Transportation', 'Highway Locations', routeLine3, 'exportToExcel()', 'printAll()') +
-      `<div class="ramp-pagination">
+    const actionBar      = renderActionBar('California Department of Transportation', 'Highway Locations', routeLine3, 'exportToExcel()', 'printAll()');
+    const paginationBtns = `<div class="ramp-pagination">
          <div class="pagination-left">
            <div style="display:flex;">
              <button class="page-arrow" ${prevDis} onclick="changePageFirst()">&#9664;&#9664;</button>
@@ -1220,7 +1220,8 @@
            </button>
          </div>`
       : '';
-    box.innerHTML = `${pagination}${header}<ul class="ramp-list">${items}</ul>${pageFooter}${generatedFooter}${unresolvedSection}${pushToCrashBtn}`;
+    box.innerHTML = `${actionBar}${header}<ul class="ramp-list">${items}</ul>${pageFooter}${paginationBtns}${generatedFooter}${unresolvedSection}${pushToCrashBtn}`;
+    box.scrollIntoView({ behavior: 'instant', block: 'start' });
   }
 
   function hsl_buildCoverPage() {
