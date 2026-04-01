@@ -1451,7 +1451,7 @@
             PMPrefix:           (p.pmPrefix && p.pmPrefix !== '.') ? p.pmPrefix : null,
             PMSuffix:           p.pmSuffix   || null,
             Alignment:          align,
-            PMMeasure:          p.pmMeasure  ?? null,
+            PMMeasure:          p.pmMeasure !== '' && p.pmMeasure != null ? parseFloat(p.pmMeasure) : null,
             LRSFromDate:        nowMs,
             LRSToDate:          null
           }
