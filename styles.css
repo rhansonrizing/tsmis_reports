@@ -83,14 +83,14 @@
     }
 
     .report-select-wrap {
-      border: 2px solid #003484;
-      border-radius: 8px;
+      border: 1px solid #003484;
+      border-radius: 0;
       padding: 0.25rem 1.25rem 0.35rem;
       display: inline-block;
       transition: box-shadow 0.15s ease;
     }
     .report-select-wrap:has(.cs.is-open) {
-      box-shadow: 0 4px 16px rgba(0, 52, 132, 0.35);
+      box-shadow: 0 2px 8px rgba(0, 52, 132, 0.15);
     }
 
     .cs { position: relative; cursor: pointer; user-select: none; }
@@ -103,6 +103,7 @@
       font-size: 1.3rem;
       font-weight: normal;
       color: #9ca3af;
+      text-transform: uppercase;
     }
     .cs.has-value .cs-value { color: #111827; }
     .cs-arrow {
@@ -120,12 +121,12 @@
       min-width: 100%;
       white-space: nowrap;
       background: #fff;
-      border: 2px solid #003484;
-      border-radius: 8px;
+      border: 1px solid #003484;
+      border-radius: 0;
       padding: 0.25rem 0;
       list-style: none;
       margin: 0;
-      box-shadow: 0 8px 24px rgba(0, 52, 132, 0.35);
+      box-shadow: 0 4px 12px rgba(0, 52, 132, 0.12);
       z-index: 100;
     }
     .cs.is-open .cs-list { display: block; }
@@ -133,6 +134,7 @@
       padding: 0.4rem 1.25rem;
       font-size: 1.3rem;
       color: #111827;
+      text-transform: uppercase;
     }
     .cs-option:not(.cs-disabled):hover {
       background: #e8edf7;
@@ -516,10 +518,10 @@
     }
     .mode-selector-box {
       border: 1px solid #d1d5db;
-      border-radius: 8px;
+      border-radius: 0;
       padding: 0.5rem 1.25rem 0.75rem;
       margin: 0;
-      box-shadow: -3px 3px 6px rgba(0,0,0,0.06), 3px 3px 6px rgba(0,0,0,0.06), 0 4px 6px rgba(0,0,0,0.06);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.07);
     }
     .mode-selector-btns {
       display: grid;
@@ -867,6 +869,20 @@
       color: #9ca3af;
       font-style: italic;
       padding: 1rem;
+    }
+
+    /* ── Intersection Detail ─────────────────────────────────────────────── */
+    .intd-table .intd-td-left   { text-align: left; }
+    .intd-table .intd-desc-hdr  { text-align: left; }
+    .intd-table .intd-row-b td  {
+      font-size: 0.68rem;
+      padding-top: 0;
+      padding-bottom: 0.15rem;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .intd-thead-row2 th {
+      border-top: 2px solid #e5e7eb;
+      padding-top: 0.35rem;
     }
 
     /* ── HSL: Print table (thead repeats on each page) ──────────────────── */

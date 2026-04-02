@@ -184,6 +184,7 @@ async function loadCountyCodeDomain() {
     const report = document.getElementById('reportSelect').value;
     const isHSL  = report === 'highway_sequence';
     const isHL   = report === 'highway_log';
+    const isINX  = report === 'intersection_detail' || report === 'intersection_summary';
     document.getElementById('appForm').style.display              = mode === 'routeMeasure' ? 'block' : 'none';
     document.getElementById('controlsGrid').style.display         = 'grid';
     const showDR = mode === 'districtRoute';
@@ -193,8 +194,8 @@ async function loadCountyCodeDomain() {
     document.getElementById('districtRouteBtn').style.display     = showDR ? 'inline-block' : 'none';
     if (showDR) document.getElementById('districtRouteBtn').disabled = true;
     document.getElementById('generateRow').style.display          = showDR ? 'flex' : 'none';
-    document.getElementById('onOffSection').style.display         = showDR && !isHSL && !isHL ? 'flex' : 'none';
-    if (isHSL || isHL) {
+    document.getElementById('onOffSection').style.display         = showDR && !isHSL && !isHL && !isINX ? 'flex' : 'none';
+    if (isHSL || isHL || isINX) {
       document.getElementById('translateOnOffRow').style.display  = 'none';
     } else {
       document.getElementById('translateOnOffRow').style.display  = '';
@@ -368,9 +369,11 @@ async function loadCountyCodeDomain() {
   }
 
   async function runDistrictRouteMode() {
-    if (document.getElementById('reportSelect').value === 'highway_sequence') { await hsl_runDistrictRouteMode(); return; }
-    if (document.getElementById('reportSelect').value === 'Ramp_Summary')     { await rs_runDistrictRouteMode(); return; }
-    if (document.getElementById('reportSelect').value === 'highway_log')      { await hl_runDistrictRouteMode(); return; }
+    if (document.getElementById('reportSelect').value === 'highway_sequence')    { await hsl_runDistrictRouteMode();  return; }
+    if (document.getElementById('reportSelect').value === 'Ramp_Summary')        { await rs_runDistrictRouteMode();   return; }
+    if (document.getElementById('reportSelect').value === 'highway_log')         { await hl_runDistrictRouteMode();   return; }
+    if (document.getElementById('reportSelect').value === 'intersection_detail') { await intd_runDistrictRouteMode(); return; }
+    if (document.getElementById('reportSelect').value === 'intersection_summary'){ await ints_runDistrictRouteMode(); return; }
     if (!tokenIsValid()) { login(); return; }
 
     const district = document.getElementById('districtSelect').value || null; // null = ALL
@@ -700,9 +703,11 @@ async function loadCountyCodeDomain() {
   }
 
   async function runTranslate() {
-    if (document.getElementById('reportSelect').value === 'highway_sequence') { await hsl_runTranslate(); return; }
-    if (document.getElementById('reportSelect').value === 'Ramp_Summary')     { await rs_runTranslate(); return; }
-    if (document.getElementById('reportSelect').value === 'highway_log')      { await hl_runTranslate(); return; }
+    if (document.getElementById('reportSelect').value === 'highway_sequence')    { await hsl_runTranslate();  return; }
+    if (document.getElementById('reportSelect').value === 'Ramp_Summary')        { await rs_runTranslate();   return; }
+    if (document.getElementById('reportSelect').value === 'highway_log')         { await hl_runTranslate();   return; }
+    if (document.getElementById('reportSelect').value === 'intersection_detail') { await intd_runTranslate(); return; }
+    if (document.getElementById('reportSelect').value === 'intersection_summary'){ await ints_runTranslate(); return; }
     if (!tokenIsValid()) { login(); return; }
 
     const from = readSection('from');
@@ -978,8 +983,10 @@ async function loadCountyCodeDomain() {
   }
 
   function printAll() {
-    if (document.getElementById('reportSelect').value === 'highway_sequence') { hsl_printAll(); return; }
-    if (document.getElementById('reportSelect').value === 'Ramp_Summary')     { rs_printAll(); return; }
+    if (document.getElementById('reportSelect').value === 'highway_sequence')    { hsl_printAll();  return; }
+    if (document.getElementById('reportSelect').value === 'Ramp_Summary')        { rs_printAll();   return; }
+    if (document.getElementById('reportSelect').value === 'intersection_detail') { intd_printAll(); return; }
+    if (document.getElementById('reportSelect').value === 'intersection_summary'){ ints_printAll(); return; }
     const box = document.getElementById('rampResults');
     const saved = box.innerHTML;
 
@@ -1027,8 +1034,10 @@ async function loadCountyCodeDomain() {
   }
 
   function exportToExcel() {
-    if (document.getElementById('reportSelect').value === 'highway_sequence') { hsl_exportToExcel(); return; }
-    if (document.getElementById('reportSelect').value === 'Ramp_Summary')     { alert('Export is not yet available for Ramp Summary.'); return; }
+    if (document.getElementById('reportSelect').value === 'highway_sequence')    { hsl_exportToExcel(); return; }
+    if (document.getElementById('reportSelect').value === 'Ramp_Summary')        { alert('Export is not yet available for Ramp Summary.');        return; }
+    if (document.getElementById('reportSelect').value === 'intersection_detail') { intd_exportToExcel(); return; }
+    if (document.getElementById('reportSelect').value === 'intersection_summary'){ ints_exportToExcel(); return; }
     if (_allResults.length === 0) return;
 
     const headers  = ['Location', '', 'PM', 'Date of Record', '', 'HG', 'Area 4', '', 'City Code', 'R/U', 'Description'];

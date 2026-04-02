@@ -24,8 +24,10 @@
     <div class="report-select-wrap">
       <select id="reportSelect" style="display:none;">
         <option value="" disabled selected hidden>-- Select report --</option>
-        <option value="highway_log" disabled>Highway Log</option>
+        <option value="highway_log">Highway Log</option>
         <option value="highway_sequence">Highway Sequence Listing</option>
+        <option value="intersection_detail">Intersection Detail</option>
+        <option value="intersection_summary">Intersection Summary</option>
         <option value="Ramp_Detail">TSAR: Ramp Detail</option>
         <option value="Ramp_Summary">TSAR: Ramp Summary</option>
       </select>
@@ -37,6 +39,8 @@
         <ul class="cs-list">
           <li class="cs-option cs-disabled" data-value="highway_log">Highway Log</li>
           <li class="cs-option" data-value="highway_sequence">Highway Sequence Listing</li>
+          <li class="cs-option cs-disabled" data-value="intersection_detail">Intersection Detail</li>
+          <li class="cs-option cs-disabled" data-value="intersection_summary">Intersection Summary</li>
           <li class="cs-option" data-value="Ramp_Detail">TSAR: Ramp Detail</li>
           <li class="cs-option" data-value="Ramp_Summary">TSAR: Ramp Summary</li>
         </ul>
@@ -250,6 +254,8 @@
 <script src="hsl.js"></script>
 <script src="ramp_summary.js"></script>
 <script src="highway_log.js"></script>
+<script src="intersection_detail.js"></script>
+<script src="intersection_summary.js"></script>
 <script src="main.js"></script>
 </body>
 </html>
