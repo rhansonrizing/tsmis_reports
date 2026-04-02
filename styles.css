@@ -345,7 +345,7 @@
 
     .hsl-ramp-col-template {
       display: grid;
-      grid-template-columns: minmax(0,0.4fr) minmax(0,0.55fr) minmax(0,0.7fr) minmax(0,0.3fr) 8ch minmax(0,0.4fr) minmax(0,0.175fr) minmax(0,0.3fr) minmax(0,1.1fr) minmax(0,4fr) minmax(0,1.5fr);
+      grid-template-columns: minmax(0,0.4fr) minmax(0,0.55fr) minmax(0,0.7fr) minmax(0,0.3fr) 8ch minmax(0,0.4fr) minmax(0,0.175fr) minmax(0,0.3fr) minmax(0,1.1fr) minmax(0,4fr);
       gap: 0.5rem;
       align-items: center;
     }
@@ -718,6 +718,42 @@
     .hsl-cover-policy p { margin: 0 0 0.5rem; }
     .hsl-cover-policy p:last-child { margin-bottom: 0; }
 
+    /* ── HSL: Legend Page ────────────────────────────────────────────────── */
+    .hsl-legend-page { font-size: 0.82rem; }
+    @media print  { .hsl-legend-page { page-break-after: always; } }
+    @media screen { .hsl-legend-page { display: none; } }
+    .hsl-legend-title {
+      text-align: center;
+      font-size: 1.2rem;
+      font-family: serif;
+      text-decoration: underline;
+      margin-bottom: 1.25rem;
+    }
+    .hsl-legend-hg-table { border-collapse: collapse; margin-bottom: 1rem; }
+    .hsl-legend-hg-table td { padding: 0.1rem 0.5rem 0.1rem 0; vertical-align: top; }
+    .hsl-legend-hg-brace {
+      border-right: 2px solid #000;
+      padding-right: 0.4rem;
+      margin-right: 0.4rem;
+    }
+    .hsl-legend-section-title {
+      font-weight: bold;
+      text-decoration: underline;
+      margin: 0.6rem 0 0.25rem;
+    }
+    .hsl-legend-codes { border-collapse: collapse; margin-left: 2rem; }
+    .hsl-legend-codes td { padding: 0.1rem 0.5rem 0.1rem 0; vertical-align: top; }
+    .hsl-legend-color-tbl { border-collapse: collapse; margin-left: 2rem; }
+    .hsl-legend-color-tbl td { padding: 0.1rem 0.5rem 0.1rem 0; vertical-align: top; }
+    .hsl-legend-color-tbl .lc-label { text-align: right; white-space: nowrap; }
+    .hsl-legend-eq        { color: #c00; }
+    .hsl-legend-rb        { color: #166534; }
+    .hsl-legend-ia-r      { color: #1d4ed8; }
+    .hsl-legend-ia-l      { color: #7c3aed; }
+    .hsl-legend-pm-prefix { color: #991b1b; font-weight: bold; }
+    .hsl-legend-bottom { border-collapse: collapse; margin-top: 0.5rem; }
+    .hsl-legend-bottom td { padding: 0.1rem 0.5rem 0.1rem 0; vertical-align: top; }
+
     /* ── RS: Ramp Summary ────────────────────────────────────────────────── */
     .rs-report { padding: 1rem 0; }
     .rs-fieldsets { display: flex; flex-direction: row; gap: 1.25rem; align-items: flex-start; }
@@ -910,6 +946,18 @@
       vertical-align: middle;
     }
     .hsl-print-table td:last-child { text-align: left; }
+
+    /* ── HSL: Row color coding ──────────────────────────────────────────── */
+    .hsl-row-eq    td { color: #c00; }
+    .hsl-row-rb    td { color: #166534; }
+    .hsl-row-cb    td { color: #166534; }
+    .hsl-row-ia-r  td { }
+    .hsl-row-ia-l  td { }
+    .hsl-item-eq   > span { color: #c00; }
+    .hsl-item-rb   > span { color: #166534; }
+    .hsl-item-cb   > span { color: #166534; }
+    .hsl-item-ia-r > span { }
+    .hsl-item-ia-l > span { }
 
     @page { margin-top: 0; }
     @media print {

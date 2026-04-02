@@ -13,6 +13,42 @@
     return { segments, routeSuffix };
   }
 
+  // Removes BEGIN/END REALIGNMENT landmarks whose PM key (prefix+measure+suffix)
+  // matches any other record already in the report.
+  function hsl_filterRealignmentLandmarks(pairs) {
+    const isRealignment = p => p.type === 'landmark' &&
+      (p.desc === 'END REALIGNMENT' || p.desc === 'BEGIN REALIGNMENT');
+    const pmKey = p => `${p.pmPrefix}|${parseFloat(p.pmMeasure).toFixed(3)}|${p.pmSuffix}`;
+    const naturalPmKeys = new Set(
+      pairs
+        .filter(p => !isRealignment(p) && p.pmMeasure !== '' && p.pmMeasure != null && !isNaN(parseFloat(p.pmMeasure)))
+        .map(pmKey)
+    );
+    return pairs.filter(p => {
+      if (!isRealignment(p)) return true;
+      if (p.alignment !== 'R') return false;
+      if (p.pmMeasure === '' || p.pmMeasure == null || isNaN(parseFloat(p.pmMeasure))) return true;
+      return !naturalPmKeys.has(pmKey(p));
+    });
+  }
+
+  // Removes city begin/end records whose PM key (prefix+measure+suffix)
+  // matches any other record already in the report — avoids duplicate rows at boundaries.
+  function hsl_filterCityBoundaries(pairs) {
+    const pmKey = p => `${p.pmPrefix}|${parseFloat(p.pmMeasure).toFixed(3)}|${p.pmSuffix}`;
+    const naturalPmKeys = new Set(
+      pairs
+        .filter(p => p.type !== 'citybegin' && p.type !== 'cityend' && p.pmMeasure !== '' && p.pmMeasure != null && !isNaN(parseFloat(p.pmMeasure)))
+        .map(pmKey)
+    );
+    return pairs.filter(p => {
+      if (p.type !== 'citybegin' && p.type !== 'cityend') return true;
+      if (p.odMeasure !== '' && p.odMeasure != null && parseFloat(p.odMeasure) < 0) return false;
+      if (p.pmMeasure === '' || p.pmMeasure == null || isNaN(parseFloat(p.pmMeasure))) return true;
+      return !naturalPmKeys.has(pmKey(p));
+    });
+  }
+
   function renderUnresolvedSection(list) {
     if (!list.length) return '';
     return `<div class="unresolved-section">
@@ -53,7 +89,7 @@
       : `(${uniqueClauses.join(' OR ')})${suffixFilter}${districtFilter}${countyFilter} AND LRSToDate IS NULL${dateFilter}`;
     const body = new URLSearchParams({
       where,
-      outFields:      'Landmarks_Short,Landmarks_Long,RouteID,ARMeasure,County,RouteSuffix,PMPrefix,PMSuffix,PMMeasure,ODMeasure,District,InventoryItemStartDate,InventoryItemEndDate',
+      outFields:      'Landmarks_Short,Landmarks_Long,RouteID,ARMeasure,County,RouteSuffix,PMPrefix,PMSuffix,PMMeasure,ODMeasure,District,Alignment,InventoryItemStartDate,InventoryItemEndDate',
       orderByFields:  'ARMeasure ASC',
       returnGeometry: 'false',
       ...versionParam(),
@@ -106,6 +142,7 @@
         pmMeasure:   a.PMMeasure   ?? '',
         odMeasure:   a.ODMeasure != null ? String(a.ODMeasure) : '',
         district:    a.District != null ? String(a.District).padStart(2, '0') : '',
+        alignment:   a.Alignment ?? '',
         startDate:   a.InventoryItemStartDate ?? null,
         endDate:     a.InventoryItemEndDate   ?? null
       };
@@ -919,7 +956,7 @@
       const unsortedPairs = [...rampPairs, ...landmarkPairs, ...routeBreakPairs, ...intersectionPairs, ...equationPairs, ...cityBeginPairs];
       const hgMap = await queryRangeLayer(unsortedPairs, 116, 'Highway_Group');
       for (const p of unsortedPairs) p.hgValue = hgMap.get(p.name) ?? '';
-      const allPairs = sortWithIndependentAlignments(unsortedPairs);
+      const allPairs = hsl_filterRealignmentLandmarks(hsl_filterCityBoundaries(sortWithIndependentAlignments(unsortedPairs)));
       if (allPairs.length === 0) { hsl_showRampResults('none'); return; }
       await hsl_queryRampDescriptions(allPairs, unresolvedIntersections, hgMap);
     } catch (err) {
@@ -1003,7 +1040,7 @@
       const unsortedPairs = [...rampPairs, ...landmarkPairs, ...routeBreakPairs, ...intersectionPairs, ...equationPairs, ...cityBeginPairs];
       const hgMap = await queryRangeLayer(unsortedPairs, 116, 'Highway_Group');
       for (const p of unsortedPairs) p.hgValue = hgMap.get(p.name) ?? '';
-      const allPairs = sortWithIndependentAlignments(unsortedPairs);
+      const allPairs = hsl_filterRealignmentLandmarks(hsl_filterCityBoundaries(sortWithIndependentAlignments(unsortedPairs)));
       if (allPairs.length === 0) { hsl_showRampResults('none'); return; }
       await hsl_queryRampDescriptions(allPairs, unresolvedIntersections, hgMap);
     } finally {
@@ -1139,21 +1176,36 @@
   function hsl_renderItem(p, idx, lengths) {
     const length  = lengths[idx];
     const isEq1   = p.type === 'equation' && !p.isSecondEq;
+    const displayedHg = p.pmSuffix === 'L' ? 'L' : (p.hwyGroup || '');
+    const hgFStyle = displayedHg === 'R' ? ' style="color:#1d4ed8;"'
+                   : displayedHg === 'L' ? ' style="color:#7c3aed;"'
+                   : '';
     const hgAndF  = isEq1
       ? `<span style="grid-column: 7 / -1;">EQUATES TO</span>`
-      : `<span>${p.pmSuffix === 'L' ? 'L' : p.hwyGroup ? esc(p.hwyGroup) : ''}</span>
-         <span>${p.featureType}</span>`;
-    return `<li class="ramp-item hsl-ramp-col-template">
-         <span>${p.district    ? esc(p.district)        : ''}</span>
-         <span>${p.county      ? esc(String(p.county)) : ''}</span>
-         <span>${p.cityCode    ? esc(p.cityCode)        : ''}</span>
-         <span style="text-align:right;">${p.pmPrefix && p.pmPrefix !== '.' ? esc(p.pmPrefix) : ''}</span>
+      : `<span${hgFStyle}>${p.pmSuffix === 'L' ? 'L' : p.hwyGroup ? esc(p.hwyGroup) : ''}</span>
+         <span${hgFStyle}>${p.featureType}</span>`;
+    const isRealignment = p.type === 'landmark' && (p.desc === 'END REALIGNMENT' || p.desc === 'BEGIN REALIGNMENT');
+    const rowClass = p.type === 'equation'              ? 'hsl-item-eq'
+                   : p.type === 'routebreak'            ? 'hsl-item-rb'
+                   : p.type === 'citybegin' ||
+                     p.type === 'cityend' ||
+                     isRealignment                      ? 'hsl-item-cb'
+                   : p.hwyGroup === 'R'                 ? 'hsl-item-ia-r'
+                   : p.hwyGroup === 'L'                 ? 'hsl-item-ia-l'
+                   : '';
+    const hasPmPrefix  = p.pmPrefix && p.pmPrefix !== '.';
+    const pmPrefixStyle = hasPmPrefix ? ' color:#991b1b; font-weight:bold;' : '';
+    const eqBlack = (p.type === 'equation' || p.type === 'citybegin' || p.type === 'cityend' || isRealignment) ? ' style="color:#000;"' : '';
+    return `<li class="ramp-item hsl-ramp-col-template${rowClass ? ' ' + rowClass : ''}">
+         <span${eqBlack}>${p.district    ? esc(p.district)        : ''}</span>
+         <span${eqBlack}>${p.county      ? esc(String(p.county)) : ''}</span>
+         <span${eqBlack}>${p.cityCode    ? esc(p.cityCode)        : ''}</span>
+         <span style="text-align:right;${pmPrefixStyle}">${hasPmPrefix ? esc(p.pmPrefix) : ''}</span>
          <span style="text-align:center;">${esc(padMeasure(p.pmMeasure))}</span>
          <span style="justify-self:start;">${p.pmSuffix === 'E' ? 'E' : ''}</span>
          ${hgAndF}
          ${isEq1 ? '' : `<span style="display:block;text-align:center;">${p.isCross ? '*P*' : p.featureType !== 'R' && p.featureType !== 'I' && length !== '' ? padMeasure(length) : ''}</span>`}
          ${isEq1 ? '' : `<span style="text-align:left;">${p.desc ? esc(p.desc) : ''}</span>`}
-         <span style="color:#999;font-size:0.8em;">${p.odMeasure ? esc(parseFloat(p.odMeasure).toFixed(3)) : ''}</span>
        </li>`;
   }
 
@@ -1162,21 +1214,36 @@
     const isEq1  = p.type === 'equation' && !p.isSecondEq;
     const distToNext = p.isCross ? '*P*'
       : p.featureType !== 'R' && p.featureType !== 'I' && length !== '' ? padMeasure(length) : '';
-    return `<tr>
-      <td>${p.district  ? esc(p.district)        : ''}</td>
-      <td>${p.county    ? esc(String(p.county))   : ''}</td>
-      <td>${p.cityCode  ? esc(p.cityCode)         : ''}</td>
-      <td style="text-align:right">${p.pmPrefix && p.pmPrefix !== '.' ? esc(p.pmPrefix) : ''}</td>
+    const isRealignment = p.type === 'landmark' && (p.desc === 'END REALIGNMENT' || p.desc === 'BEGIN REALIGNMENT');
+    const rowClass = p.type === 'equation'              ? 'hsl-row-eq'
+                   : p.type === 'routebreak'            ? 'hsl-row-rb'
+                   : p.type === 'citybegin' ||
+                     p.type === 'cityend' ||
+                     isRealignment                      ? 'hsl-row-cb'
+                   : p.hwyGroup === 'R'                 ? 'hsl-row-ia-r'
+                   : p.hwyGroup === 'L'                 ? 'hsl-row-ia-l'
+                   : '';
+    const hasPmPrefix   = p.pmPrefix && p.pmPrefix !== '.';
+    const pmPrefixStyle = hasPmPrefix ? ' color:#991b1b; font-weight:bold;' : '';
+    const displayedHg   = p.pmSuffix === 'L' ? 'L' : (p.hwyGroup || '');
+    const hgFStyle      = displayedHg === 'R' ? ' style="color:#1d4ed8;"'
+                        : displayedHg === 'L' ? ' style="color:#7c3aed;"'
+                        : '';
+    const eqBlack       = (p.type === 'equation' || p.type === 'citybegin' || p.type === 'cityend' || isRealignment) ? ' style="color:#000;"' : '';
+    return `<tr${rowClass ? ` class="${rowClass}"` : ''}>
+      <td${eqBlack}>${p.district  ? esc(p.district)        : ''}</td>
+      <td${eqBlack}>${p.county    ? esc(String(p.county))   : ''}</td>
+      <td${eqBlack}>${p.cityCode  ? esc(p.cityCode)         : ''}</td>
+      <td style="text-align:right;${pmPrefixStyle}">${hasPmPrefix ? esc(p.pmPrefix) : ''}</td>
       <td style="text-align:center">${esc(padMeasure(p.pmMeasure))}</td>
       <td>${p.pmSuffix === 'E' ? 'E' : ''}</td>
       ${isEq1
         ? `<td colspan="4" style="text-align:center">EQUATES TO</td>`
-        : `<td>${p.pmSuffix === 'L' ? 'L' : p.hwyGroup ? esc(p.hwyGroup) : ''}</td>
-           <td>${p.featureType ? esc(p.featureType) : ''}</td>
+        : `<td${hgFStyle}>${p.pmSuffix === 'L' ? 'L' : p.hwyGroup ? esc(p.hwyGroup) : ''}</td>
+           <td${hgFStyle}>${p.featureType ? esc(p.featureType) : ''}</td>
            <td style="text-align:center">${distToNext}</td>
            <td style="text-align:left">${p.desc ? esc(p.desc) : ''}</td>`
       }
-      <td style="color:#999;font-size:0.8em;">${p.odMeasure ? esc(parseFloat(p.odMeasure).toFixed(3)) : ''}</td>
     </tr>`;
   }
 
@@ -1218,7 +1285,6 @@
          <span style="padding-left:4ch">F</span>
          <span style="padding-left:5ch">DISTANCE TO<br>NEXT POINT</span>
          <span style="padding-left:5ch">Description</span>
-         <span style="padding-left:2ch">Odometer</span>
        </div>`;
     const lengths = _hslLengths ?? hsl_computeLengths(_allResults);
     const items = pageSlice.map((p, i) => hsl_renderItem(p, start + i, lengths)).join('');
@@ -1293,6 +1359,105 @@
     </div>`;
   }
 
+  function hsl_buildLegendPage() {
+    const row = (code, dash, desc) =>
+      `<tr><td>${code}</td><td>${dash}</td><td>${desc}</td></tr>`;
+    return `<div class="hsl-legend-page">
+      <div class="hsl-legend-title">Legend</div>
+
+      <table class="hsl-legend-hg-table"><tbody>
+        <tr>
+          <td style="vertical-align:middle; padding-right:0.5rem; line-height:1.8;">
+            G<br>R &nbsp;= Highway<br>P &nbsp;&nbsp;&nbsp;&nbsp; Group
+          </td>
+          <td class="hsl-legend-hg-brace" style="width:0; padding:0;"></td>
+          <td style="padding-left:0.6rem;">
+            <table style="border-collapse:collapse;"><tbody>
+              ${row('R','-','Right Independent Alignment')}
+              ${row('L','-','Left Independent Alignment')}
+              ${row('D','-','Divided Highway')}
+              ${row('U','-','Undivided Highway')}
+              ${row('X','-','Unconstructed Highway')}
+            </tbody></table>
+          </td>
+        </tr>
+        <tr><td style="height:0.6rem;"></td></tr>
+        <tr>
+          <td style="vertical-align:middle; padding-right:0.5rem; line-height:1.8;">
+            F &nbsp;= File<br>T &nbsp;&nbsp;&nbsp;&nbsp; Type
+          </td>
+          <td class="hsl-legend-hg-brace" style="width:0; padding:0;"></td>
+          <td style="padding-left:0.6rem;">
+            <table style="border-collapse:collapse;"><tbody>
+              ${row('H','-','Highway')}
+              ${row('I','-','Intersection')}
+              ${row('R','-','Ramp')}
+            </tbody></table>
+          </td>
+        </tr>
+      </tbody></table>
+
+      <div class="hsl-legend-section-title">Route Suffix Codes</div>
+      <table class="hsl-legend-codes"><tbody>
+        ${row('S','&nbsp;-','Supplemental Route')}
+        ${row('U','&nbsp;-','Unrelinquished Route')}
+      </tbody></table>
+
+      <div class="hsl-legend-section-title">Post Mile Prefix Codes</div>
+      <table class="hsl-legend-codes"><tbody>
+        ${row('C','&nbsp;-','Commercial lanes')}
+        ${row('D','&nbsp;-','Duplicate post mile at meandering county line')}
+        ${row('G','&nbsp;-','Reposting of duplicate post mile at the end of a route')}
+        ${row('H','&nbsp;-','Realignment of D mileage')}
+        ${row('L','&nbsp;-','Overlap post mile')}
+        ${row('M','&nbsp;-','Realignment of R mileage')}
+        ${row('N','&nbsp;-','Realignment of M mileage')}
+        ${row('R','&nbsp;-','First realignment')}
+        ${row('S','&nbsp;-','Spur')}
+        ${row('T','&nbsp;-','Temporary connection')}
+      </tbody></table>
+
+      <div class="hsl-legend-section-title">Post Mile Suffix Codes</div>
+      <table class="hsl-legend-codes"><tbody>
+        ${row('E','&nbsp;-','Equation')}
+      </tbody></table>
+
+      <div class="hsl-legend-section-title">Font Color</div>
+      <table class="hsl-legend-color-tbl"><tbody>
+        <tr>
+          <td class="lc-label">Red</td>
+          <td>&nbsp;-</td>
+          <td><span class="hsl-legend-eq">Equation</span></td>
+        </tr>
+        <tr>
+          <td class="lc-label">Green</td>
+          <td>&nbsp;-</td>
+          <td><span class="hsl-legend-rb">End of District, County, Route, Independent Alignment, State Line or Route Break</span></td>
+        </tr>
+        <tr>
+          <td class="lc-label">Blue</td>
+          <td>&nbsp;-</td>
+          <td><span class="hsl-legend-ia-r">Right Independent Alignment</span></td>
+        </tr>
+        <tr>
+          <td class="lc-label">Purple</td>
+          <td>&nbsp;-</td>
+          <td><span class="hsl-legend-ia-l">Left Independent Alignment</span></td>
+        </tr>
+        <tr>
+          <td class="lc-label">Bold Dark Red</td>
+          <td>&nbsp;-</td>
+          <td><span class="hsl-legend-pm-prefix">Post Mile Prefix (C,D,H,L,M,N,R,S and T)</span></td>
+        </tr>
+      </tbody></table>
+
+      <table class="hsl-legend-bottom" style="margin-top:0.6rem;"><tbody>
+        <tr><td>Length</td><td>&nbsp;-</td><td>The mileage to the next highway point</td></tr>
+        <tr><td>&nbsp;&nbsp;*P*</td><td>&nbsp;-</td><td>At valid postmile on intersecting lower route</td></tr>
+      </tbody></table>
+    </div>`;
+  }
+
   function hsl_printAll() {
     const box   = document.getElementById('rampResults');
     const saved = box.innerHTML;
@@ -1312,8 +1477,7 @@
            <col style="width:2%">
            <col style="width:4%">
            <col style="width:13%">
-           <col style="width:38%">
-           <col style="width:9%">
+           <col style="width:47%">
          </colgroup>
          <thead>
            <tr>
@@ -1327,15 +1491,15 @@
              <th>F</th>
              <th>Distance to<br>Next Point</th>
              <th>Description</th>
-             <th>Odometer</th>
            </tr>
          </thead>
          <tbody>${rows}</tbody>
        </table>`;
     const generatedFooter = `<div class="generated-on">Generated on ${esc(_generatedOn)}</div>`;
     const unresolvedSection = renderUnresolvedSection(_unresolvedIntersections);
-    const coverPage = hsl_buildCoverPage();
-    box.innerHTML = `${coverPage}${reportTitle}${table}${generatedFooter}${unresolvedSection}`;
+    const coverPage  = hsl_buildCoverPage();
+    const legendPage = hsl_buildLegendPage();
+    box.innerHTML = `${coverPage}${legendPage}${reportTitle}${table}${generatedFooter}${unresolvedSection}`;
     window.addEventListener('afterprint', () => { box.innerHTML = saved; }, { once: true });
     window.print();
   }
@@ -1371,7 +1535,7 @@
       const unsortedPairs = [...rampPairs, ...landmarkPairs, ...routeBreakPairs, ...intersectionPairs, ...equationPairs, ...cityBeginPairs];
       const hgMapPre = await queryRangeLayer(unsortedPairs, 116, 'Highway_Group');
       for (const p of unsortedPairs) p.hgValue = hgMapPre.get(p.name) ?? '';
-      const allPairs = sortWithIndependentAlignments(unsortedPairs);
+      const allPairs = hsl_filterRealignmentLandmarks(hsl_filterCityBoundaries(sortWithIndependentAlignments(unsortedPairs)));
       if (allPairs.length === 0) return;
 
       // Capture routeId/arMeasure before any merging; default to null so missing entries fail visibly

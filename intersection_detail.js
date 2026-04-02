@@ -197,26 +197,15 @@ function intd_renderPage() {
 
 // ── INTD: Pagination ──────────────────────────────────────────────────────
 
-function intd_changePage(delta) {
-  const totalPages = Math.ceil(_intd_allResults.length / INTD_ROWS_PER_PAGE);
-  const next = _intd_currentPage + delta;
-  if (next < 0 || next >= totalPages) return;
-  _intd_currentPage = next;
-  intd_renderPage();
-}
-
-function intd_changePageFirst() {
-  if (_intd_currentPage === 0) return;
-  _intd_currentPage = 0;
-  intd_renderPage();
-}
-
-function intd_changePageLast() {
-  const last = Math.ceil(_intd_allResults.length / INTD_ROWS_PER_PAGE) - 1;
-  if (_intd_currentPage === last) return;
-  _intd_currentPage = last;
-  intd_renderPage();
-}
+const _intdPageCtrl = makePageController(
+  ()  => _intd_currentPage,
+  v   => { _intd_currentPage = v; },
+  ()  => Math.ceil(_intd_allResults.length / INTD_ROWS_PER_PAGE),
+  intd_renderPage
+);
+function intd_changePage(delta)  { _intdPageCtrl.changePage(delta); }
+function intd_changePageFirst()  { _intdPageCtrl.changePageFirst(); }
+function intd_changePageLast()   { _intdPageCtrl.changePageLast(); }
 
 // ── INTD: Print ───────────────────────────────────────────────────────────
 

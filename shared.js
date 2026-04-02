@@ -958,29 +958,48 @@ async function loadCountyCodeDomain() {
   }
 
   // ── Shared: Pagination ───────────────────────────────────────────────────
-  // changePage* calls renderPage(), which dispatches to the active report's
-  // render function, so pagination works the same for all reports.
 
-  function changePage(delta) {
-    const totalPages = Math.ceil(_allResults.length / PAGE_SIZE);
-    const next = _currentPage + delta;
-    if (next < 0 || next >= totalPages) return;
-    _currentPage = next;
-    renderPage();
+  /**
+   * Factory that returns {changePage, changePageFirst, changePageLast} bound
+   * to the caller's state.  Each report passes its own getters/setters so the
+   * three functions never need to be duplicated.
+   * @param {()=>number}  getPage       - returns current page index
+   * @param {(n:number)=>void} setPage  - sets current page index
+   * @param {()=>number}  getTotalPages - returns total page count
+   * @param {()=>void}    render        - re-renders the current page
+   */
+  function makePageController(getPage, setPage, getTotalPages, render) {
+    return {
+      changePage(delta) {
+        const next = getPage() + delta;
+        if (next < 0 || next >= getTotalPages()) return;
+        setPage(next);
+        render();
+      },
+      changePageFirst() {
+        if (getPage() === 0) return;
+        setPage(0);
+        render();
+      },
+      changePageLast() {
+        const last = getTotalPages() - 1;
+        if (getPage() === last) return;
+        setPage(last);
+        render();
+      }
+    };
   }
 
-  function changePageFirst() {
-    if (_currentPage === 0) return;
-    _currentPage = 0;
-    renderPage();
-  }
-
-  function changePageLast() {
-    const last = Math.ceil(_allResults.length / PAGE_SIZE) - 1;
-    if (_currentPage === last) return;
-    _currentPage = last;
-    renderPage();
-  }
+  // Ramp detail / ramp summary pagination
+  const _rdPageCtrl = makePageController(
+    ()  => _currentPage,
+    v   => { _currentPage = v; },
+    ()  => Math.ceil(_allResults.length / PAGE_SIZE),
+    ()  => renderPage()
+  );
+  function changePage(delta)  { _rdPageCtrl.changePage(delta); }
+  function changePageFirst()  { _rdPageCtrl.changePageFirst(); }
+  function changePageLast()   { _rdPageCtrl.changePageLast(); }
 
   function printAll() {
     if (document.getElementById('reportSelect').value === 'highway_sequence')    { hsl_printAll();  return; }

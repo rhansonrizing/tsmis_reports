@@ -862,26 +862,15 @@
     </tr>`;
   }
 
-  function hl_changePage(delta) {
-    const totalPages = hl_getPageBoundaries().length;
-    const next = _hl_currentPage + delta;
-    if (next < 0 || next >= totalPages) return;
-    _hl_currentPage = next;
-    hl_renderPage();
-  }
-
-  function hl_changePageFirst() {
-    if (_hl_currentPage === 0) return;
-    _hl_currentPage = 0;
-    hl_renderPage();
-  }
-
-  function hl_changePageLast() {
-    const last = hl_getPageBoundaries().length - 1;
-    if (_hl_currentPage === last) return;
-    _hl_currentPage = last;
-    hl_renderPage();
-  }
+  const _hlPageCtrl = makePageController(
+    ()  => _hl_currentPage,
+    v   => { _hl_currentPage = v; },
+    ()  => hl_getPageBoundaries().length,
+    hl_renderPage
+  );
+  function hl_changePage(delta)  { _hlPageCtrl.changePage(delta); }
+  function hl_changePageFirst()  { _hlPageCtrl.changePageFirst(); }
+  function hl_changePageLast()   { _hlPageCtrl.changePageLast(); }
 
   function hl_exportToExcel() {
     if (_hl_allResults.length === 0) return;
