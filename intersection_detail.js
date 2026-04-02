@@ -351,7 +351,12 @@ async function intd_queryIntersections(segments, routeNum, district = null, coun
       lightT:           fmtDate(a.Int_Lighted_Ind_Begin_Date),
       lightY:           a.Intersection_Lighted_Ind != null ? String(a.Intersection_Lighted_Ind) : '',
       intStEff:         a.Cross_AADT_YEAR != null ? String(a.Cross_AADT_YEAR) : '',
-      intrteAdt:        a.Cross_AADT      != null ? String(a.Cross_AADT)      : ''
+      intrteAdt:        a.Cross_AADT      != null ? String(a.Cross_AADT)      : '',
+      intrteRoute:      a.Cross_RouteNum    != null ? String(a.Cross_RouteNum)    : '',
+      intrteS:          a.Cross_RouteSuffix != null ? String(a.Cross_RouteSuffix) : '',
+      intrtePost:       a.Cross_PMPrefix    != null ? String(a.Cross_PMPrefix)    : '',
+      inrteMile:        a.Cross_PMMeasure   != null ? parseFloat(a.Cross_PMMeasure).toFixed(3) : '',
+      xingRte:          a.Cross_PMSuffix    != null ? String(a.Cross_PMSuffix)    : ''
     });
   }
   for (const f of crossResults) {
@@ -374,7 +379,12 @@ async function intd_queryIntersections(segments, routeNum, district = null, coun
       lightT:           fmtDate(a.Int_Lighted_Ind_Begin_Date),
       lightY:           a.Intersection_Lighted_Ind != null ? String(a.Intersection_Lighted_Ind) : '',
       intStEff:         a.Cross_AADT_YEAR != null ? String(a.Cross_AADT_YEAR) : '',
-      intrteAdt:        a.Cross_AADT      != null ? String(a.Cross_AADT)      : ''
+      intrteAdt:        a.Cross_AADT      != null ? String(a.Cross_AADT)      : '',
+      intrteRoute:      a.Main_RouteNum    != null ? String(a.Main_RouteNum)    : '',
+      intrteS:          a.Main_RouteSuffix != null ? String(a.Main_RouteSuffix) : '',
+      intrtePost:       a.Main_PMPrefix    != null ? String(a.Main_PMPrefix)    : '',
+      inrteMile:        a.Main_PMMeasure   != null ? parseFloat(a.Main_PMMeasure).toFixed(3) : '',
+      xingRte:          a.Main_PMSuffix    != null ? String(a.Main_PMSuffix)    : ''
     });
   }
 
@@ -472,13 +482,13 @@ async function intd_queryIntersections(segments, routeNum, district = null, coun
       interR:       '',
       interT:       '',
       interN:       '',
-      intStEff:     detail.intStEff  ?? '',
-      intrteAdt:    detail.intrteAdt ?? '',
-      intrteS:      '',
-      intrteRoute:  '',
-      intrtePost:   '',
-      inrteMile:    '',
-      xingRte:      '',
+      intStEff:     detail.intStEff    ?? '',
+      intrteAdt:    detail.intrteAdt   ?? '',
+      intrteRoute:  detail.intrteRoute ?? '',
+      intrteS:      detail.intrteS     ?? '',
+      intrtePost:   detail.intrtePost  ?? '',
+      inrteMile:    detail.inrteMile   ?? '',
+      xingRte:      detail.xingRte     ?? '',
       xingS:        ''
     });
   }

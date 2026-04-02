@@ -337,7 +337,7 @@
       : `(${segClauses.join(' OR ')})${dateFilter}`;
     const body = new URLSearchParams({
       where,
-      outFields:      'RouteID,FromARMeasure,ToARMeasure,City_Code,BeginPMPrefix,BeginPMMeasure,BeginCounty,EndPMPrefix,EndPMMeasure,EndCounty,District',
+      outFields:      'RouteID,FromARMeasure,ToARMeasure,City_Code,BeginPMPrefix,BeginPMSuffix,BeginPMMeasure,BeginODMeasure,BeginCounty,EndPMPrefix,EndPMSuffix,EndPMMeasure,EndODMeasure,EndCounty,District',
       returnGeometry: 'false',
       ...versionParam(),
       f:              'json',
@@ -381,12 +381,12 @@
           desc:        cityCode ? `CITY BEGIN: ${cityCode}` : 'CITY BEGIN',
           routeId:     a.RouteID,
           arMeasure:   a.FromARMeasure,
-          county:      a.BeginCounty   ?? '',
+          county:      a.BeginCounty    ?? '',
           routeSuffix: '',
-          pmPrefix:    a.BeginPMPrefix ?? '',
-          pmSuffix:    '.',
+          pmPrefix:    a.BeginPMPrefix  ?? '',
+          pmSuffix:    a.BeginPMSuffix  ?? '.',
           pmMeasure:   a.BeginPMMeasure != null ? String(a.BeginPMMeasure) : '',
-          odMeasure:   '',
+          odMeasure:   a.BeginODMeasure != null ? String(a.BeginODMeasure) : '',
           district:    fmtDistrict(a),
           cityCode,
           startDate:   null,
@@ -398,12 +398,12 @@
           desc:        cityCode ? `CITY END: ${cityCode}` : 'CITY END',
           routeId:     a.RouteID,
           arMeasure:   a.ToARMeasure,
-          county:      a.EndCounty   ?? '',
+          county:      a.EndCounty    ?? '',
           routeSuffix: '',
-          pmPrefix:    a.EndPMPrefix ?? '',
-          pmSuffix:    '.',
+          pmPrefix:    a.EndPMPrefix  ?? '',
+          pmSuffix:    a.EndPMSuffix  ?? '.',
           pmMeasure:   a.EndPMMeasure != null ? String(a.EndPMMeasure) : '',
-          odMeasure:   '',
+          odMeasure:   a.EndODMeasure != null ? String(a.EndODMeasure) : '',
           district:    fmtDistrict(a),
           cityCode,
           startDate:   null,
@@ -412,30 +412,47 @@
       ];
     });
 
-    // Translate AR → OD to get the sort position for each city boundary point.
+    // Translate AR → PM (layer 3) and OD (layer 5) to get sort position and PM attribution.
     const CHUNK = 200;
     const chunks = [];
     for (let i = 0; i < pairs.length; i += CHUNK) chunks.push(pairs.slice(i, i + CHUNK));
     await Promise.all(chunks.map(async chunk => {
       const locs = chunk.map(p => ({ routeId: p.routeId, measure: p.arMeasure }));
-      const xlateBody = new URLSearchParams({
+      const makeBody = targetIds => new URLSearchParams({
         locations:             JSON.stringify(locs),
-        targetNetworkLayerIds: JSON.stringify([5]),
+        targetNetworkLayerIds: JSON.stringify(targetIds),
         ...versionParam(),
         ...historicMomentParam(),
         f:     'json',
         token: _token
-      });
-      const xlateData = await fetch(
-        `${CONFIG.mapServiceUrl}/exts/LRServer/networkLayers/4/translate`,
-        { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: xlateBody.toString() }
-      ).then(r => r.json()).catch(() => ({ locations: [] }));
-      (xlateData.locations ?? []).forEach((loc, idx) => {
+      }).toString();
+      const url = `${CONFIG.mapServiceUrl}/exts/LRServer/networkLayers/4/translate`;
+      const headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
+      const [odData, pmData] = await Promise.all([
+        fetch(url, { method: 'POST', headers, body: makeBody([5]) }).then(r => r.json()).catch(() => ({ locations: [] })),
+        fetch(url, { method: 'POST', headers, body: makeBody([3]) }).then(r => r.json()).catch(() => ({ locations: [] }))
+      ]);
+      // Apply OD measures (used for sort order)
+      (odData.locations ?? []).forEach((loc, idx) => {
         const xlated = loc.translatedLocations ?? [];
         const result = xlated.find(r => r.measure != null && routeNumDigits && r.routeId?.includes(routeNumDigits))
                     ?? xlated.find(r => r.measure != null)
                     ?? xlated[0];
         if (result?.measure != null) chunk[idx].odMeasure = String(result.measure);
+      });
+      // Apply PM attributes — routeId format: county(3)+routeNum(3)+suffix(1)+pmPrefix(1)+pmSuffix(1)+align(1)
+      (pmData.locations ?? []).forEach((loc, idx) => {
+        const xlated = loc.translatedLocations ?? [];
+        const result = xlated.find(r => r.measure != null && routeNumDigits && r.routeId?.includes(routeNumDigits))
+                    ?? xlated.find(r => r.measure != null)
+                    ?? xlated[0];
+        if (result?.routeId) {
+          const rid = result.routeId;
+          chunk[idx].county    = rid.slice(0, 3);
+          chunk[idx].pmPrefix  = rid.length > 7 ? rid[7] : '';
+          chunk[idx].pmSuffix  = rid.length > 8 ? rid[8] : '.';
+          chunk[idx].pmMeasure = result.measure != null ? String(result.measure) : '';
+        }
       });
     }));
 
