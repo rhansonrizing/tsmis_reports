@@ -47,8 +47,12 @@
         if (p.desc && p.desc.includes('BRE')) console.log('[BRE cityend] REMOVED by OD<0, od=' + p.odMeasure);
         return false;
       }
-      if (p.type === 'cityend') return true; // always show city ends
-      if (p.pmMeasure === '' || p.pmMeasure == null || isNaN(parseFloat(p.pmMeasure))) return true;
+      // Drop city begin/end records with a negative or negative-zero PM — the city
+      // boundary falls before this route segment starts, not a genuine crossing.
+      const pmVal = parseFloat(p.pmMeasure);
+      if (!isNaN(pmVal) && (pmVal < 0 || Object.is(pmVal, -0))) return false;
+      if (p.type === 'cityend') return true;
+      if (p.pmMeasure === '' || p.pmMeasure == null || isNaN(pmVal)) return true;
       return !naturalPmKeys.has(pmKey(p));
     });
   }
@@ -840,6 +844,10 @@
         fetch151(`${baseFilter} AND Cross_RouteNum = '${routeNumDigits}'`)
       ]);
       const detailMap = new Map();
+      const buildCrossLabel = (countyCode, num, sfx, pmPfx, pmSfx, align) => {
+        const n = String(num ?? '').padStart(3, '0') || '000';
+        return (countyCode || '.') + n + (sfx || '.') + (pmPfx || '.') + (pmSfx || '.') + (align || '.');
+      };
       for (const f of mainResults) {
         const a = f.attributes ?? {};
         if (a.INTERSECTION_ID == null) continue;
@@ -849,9 +857,11 @@
         const pmMeasureVal = a.Main_PMMeasure ?? '';
         const pmRouteId    = (a.County_Code ?? '.') + routeNumDigits + (routeSuffix || '.') + (a.Main_PMPrefix ?? '.') + (a.Main_PMSuffix ?? '.') + (a.Main_PMSuffix === 'L' ? 'L' : (a.Main_Alignment ?? '.'));
         detailMap.set(a.INTERSECTION_ID, {
-          desc:      a.Intersection_Name ?? '',
-          county:    a.County_Code       ?? '',
-          district:  a.District_Code ? String(a.District_Code).padStart(2, '0') : '',
+          desc:           a.Intersection_Name ?? '',
+          county:         a.County_Code       ?? '',
+          district:       a.District_Code ? String(a.District_Code).padStart(2, '0') : '',
+          crossPmMeasure: a.Cross_PMMeasure ?? null,
+          crossRouteLabel: buildCrossLabel(a.County_Code, a.Cross_RouteNum, a.Cross_RouteSuffix, a.Cross_PMPrefix, a.Cross_PMSuffix, a.Cross_Alignment),
           pmPrefix, pmSuffix, pmMeasure: pmMeasureVal, pmRouteId, isCross: false
         });
       }
@@ -864,9 +874,11 @@
         const pmMeasureVal = a.Cross_PMMeasure ?? '';
         const pmRouteId    = (a.County_Code ?? '.') + routeNumDigits + (routeSuffix || '.') + (a.Cross_PMPrefix ?? '.') + (a.Cross_PMSuffix ?? '.') + (a.Cross_PMSuffix === 'L' ? 'L' : (a.Cross_Alignment ?? '.'));
         detailMap.set(a.INTERSECTION_ID, {
-          desc:      a.Intersection_Name ?? '',
-          county:    a.County_Code       ?? '',
-          district:  a.District_Code ? String(a.District_Code).padStart(2, '0') : '',
+          desc:           a.Intersection_Name ?? '',
+          county:         a.County_Code       ?? '',
+          district:       a.District_Code ? String(a.District_Code).padStart(2, '0') : '',
+          crossPmMeasure: a.Main_PMMeasure ?? null,
+          crossRouteLabel: buildCrossLabel(a.County_Code, a.Main_RouteNum, a.Main_RouteSuffix, a.Main_PMPrefix, a.Main_PMSuffix, a.Main_Alignment),
           pmPrefix, pmSuffix, pmMeasure: pmMeasureVal, pmRouteId, isCross: true
         });
       }
@@ -937,21 +949,23 @@
         if (!isNaN(od) && (od < minMeasure - 0.1 || od > maxMeasure + 0.1)) continue;
         const ar = idToAr.get(id);
         pairs.push({
-          type:        'intersection',
-          name:        String(id),
-          desc:        detail.desc,
-          routeId:     ar?.routeId   ?? '',
-          arMeasure:   ar?.arMeasure ?? null,
+          type:            'intersection',
+          name:            String(id),
+          desc:            detail.desc,
+          crossPmMeasure:  detail.crossPmMeasure,
+          crossRouteLabel: detail.crossRouteLabel,
+          routeId:         ar?.routeId   ?? '',
+          arMeasure:      ar?.arMeasure ?? null,
           odMeasure,
-          county:      detail.county,
-          district:    detail.district,
-          routeSuffix: '',
-          pmPrefix:    detail.pmPrefix,
-          pmSuffix:    detail.pmSuffix,
-          pmMeasure:   detail.pmMeasure,
-          isCross:     detail.isCross,
-          startDate:   null,
-          endDate:     null
+          county:         detail.county,
+          district:       detail.district,
+          routeSuffix:    '',
+          pmPrefix:       detail.pmPrefix,
+          pmSuffix:       detail.pmSuffix,
+          pmMeasure:      detail.pmMeasure,
+          isCross:        detail.isCross,
+          startDate:      null,
+          endDate:        null
         });
       }
       return { pairs, unresolved };
@@ -977,8 +991,8 @@
     let endArMeasure = null;
     let endDesc = '';
 
-    if (district != null) {
-      // ── Layer 114: district boundary events ───────────────────────────────
+    if (district != null && county == null) {
+      // ── Layer 114: district boundary events (no county filter) ────────────
       endDesc = 'END OF DISTRICT';
       const segClauses = segments.map(({ fromBest, toBest }) => {
         const rid   = fromBest.routeId.endsWith('_S') ? fromBest.routeId.slice(0, -2) + '_P' : fromBest.routeId;
@@ -1012,8 +1026,8 @@
       }
 
     } else if (county != null) {
-      // ── Layer 85: county boundary events ──────────────────────────────────
-      endDesc = 'END OF COUNTY';
+      // ── Layer 85: county boundary events (also used when district+county both set) ──
+      endDesc = district != null ? 'END OF DISTRICT' : 'END OF COUNTY';
       const countyCode = normalizeCountyCode(county);
       const segClauses = segments.map(({ fromBest, toBest }) => {
         const rid   = fromBest.routeId.endsWith('_S') ? fromBest.routeId.slice(0, -2) + '_P' : fromBest.routeId;
@@ -1085,12 +1099,16 @@
 
     if (endArMeasure == null) return null;
 
+    // Step slightly inside the boundary for all lookups so they land in the
+    // current district/county rather than the adjacent one.
+    const lookupMeasure = endArMeasure - 0.001;
+
     // If district wasn't supplied (county/route cases), look it up from layer 114
     let resolvedDistrict = district != null ? String(district).padStart(2, '0') : '';
     if (!resolvedDistrict) {
       try {
         const body114 = new URLSearchParams({
-          where:             `RouteID = '${primaryRouteId}' AND FromARMeasure <= ${endArMeasure} AND ToARMeasure >= ${endArMeasure}${getDateFilter()}`,
+          where:             `RouteID = '${primaryRouteId}' AND FromARMeasure <= ${lookupMeasure} AND ToARMeasure >= ${lookupMeasure}${getDateFilter()}`,
           outFields:         'District',
           returnGeometry:    'false',
           resultRecordCount: '1',
@@ -1103,8 +1121,9 @@
       } catch (_) { /* leave blank */ }
     }
 
-    // Translate AR → OD (4→5) and AR → PM (4→3)
-    const loc = { routeId: primaryRouteId, measure: endArMeasure };
+    // Translate AR → OD (4→5) and AR → PM (4→3) using lookupMeasure so results
+    // land inside the current district/county rather than the adjacent one.
+    const loc = { routeId: primaryRouteId, measure: lookupMeasure };
     const makeXlateBody = targetIds => new URLSearchParams({
       locations:             JSON.stringify([loc]),
       targetNetworkLayerIds: JSON.stringify(targetIds),
@@ -1186,7 +1205,10 @@
       for (const p of unsortedPairs) p.hgValue = hgMap.get(p.name) ?? '';
       const allPairs = hsl_filterRealignmentLandmarks(hsl_filterCityBoundaries(sortWithIndependentAlignments(unsortedPairs)));
       if (allPairs.length === 0) { hsl_showRampResults('none'); return; }
-      const endPair = await hsl_queryEndRecord(segments, district, county, paddedRoute);
+
+
+      const lastPair = allPairs[allPairs.length - 1];
+      const endPair = (lastPair?.type === 'cityend' || lastPair?.type === 'citybegin') ? null : await hsl_queryEndRecord(segments, district, county, paddedRoute);
       if (endPair) {
         const endHgMap = await queryRangeLayer([endPair], 116, 'Highway_Group');
         endHgMap.forEach((v, k) => hgMap.set(k, v));
@@ -1276,7 +1298,8 @@
       for (const p of unsortedPairs) p.hgValue = hgMap.get(p.name) ?? '';
       const allPairs = hsl_filterRealignmentLandmarks(hsl_filterCityBoundaries(sortWithIndependentAlignments(unsortedPairs)));
       if (allPairs.length === 0) { hsl_showRampResults('none'); return; }
-      const endPair = await hsl_queryEndRecord(segments, null, null, paddedRouteNum);
+      const lastPair = allPairs[allPairs.length - 1];
+      const endPair = (lastPair?.type === 'cityend' || lastPair?.type === 'citybegin') ? null : await hsl_queryEndRecord(segments, null, null, paddedRouteNum);
       if (endPair) {
         const endHgMap = await queryRangeLayer([endPair], 116, 'Highway_Group');
         endHgMap.forEach((v, k) => hgMap.set(k, v));
@@ -1352,7 +1375,14 @@
         featureType: p.type === 'equation' ? 'H' : p.type === 'landmark' ? 'H' : p.type === 'routebreak' ? 'H' : p.type === 'citybegin' ? 'H' : p.type === 'cityend' ? 'H' : p.type === 'intersection' ? 'I' : 'R',
         isCross:     p.isCross ?? false,
         isSecondEq:  p.isSecondEq ?? false,
-        desc:        p.type === 'ramp' ? (descMap.get(p.name) ?? '') : p.desc,
+        desc:        (() => {
+          const base = p.type === 'ramp' ? (descMap.get(p.name) ?? '') : p.desc;
+          if (p.type === 'intersection' && p.crossPmMeasure != null) {
+            const pm = parseFloat(p.crossPmMeasure);
+            return isNaN(pm) ? base : `${base} (${p.crossRouteLabel ?? 'PM'} ${pm.toFixed(3)})`;
+          }
+          return base;
+        })(),
         hwyGroup,
         cityCode,
         county:      p.county,
@@ -1513,11 +1543,12 @@
     const box = document.getElementById('rampResults');
     box.style.display = 'block';
     box.className     = 'ramp-results';
-    const pageStarts = _hslPageStarts?.length ? _hslPageStarts : [0];
+    const paginated  = isPaginated();
+    const pageStarts = paginated && _hslPageStarts?.length ? _hslPageStarts : [0];
     const totalPages = pageStarts.length;
-    const page       = _currentPage;
-    const start      = pageStarts[page] ?? 0;
-    const end        = pageStarts[page + 1] ?? _allResults.length;
+    const page       = paginated ? _currentPage : 0;
+    const start      = paginated ? (pageStarts[page] ?? 0) : 0;
+    const end        = paginated ? (pageStarts[page + 1] ?? _allResults.length) : _allResults.length;
     const pageSlice  = _allResults.slice(start, end);
     const prevDis = page === 0              ? 'disabled' : '';
     const nextDis = page === totalPages - 1 ? 'disabled' : '';
@@ -1555,9 +1586,10 @@
        </div>`;
     const lengths = _hslLengths ?? hsl_computeLengths(_allResults);
     const items = pageSlice.map((p, i) => hsl_renderItem(p, start + i, lengths)).join('');
-    const pageFooter = totalPages > 1
+    const pageFooter = paginated && totalPages > 1
       ? `<div class="page-info">Page ${page + 1} of ${totalPages}</div>`
       : '';
+    const shownPaginationBtns = paginated ? paginationBtns : '';
     const generatedFooter = `<div class="generated-on">Generated on ${esc(_generatedOn)}</div>`;
     const unresolvedSection = renderUnresolvedSection(_unresolvedIntersections);
     const today = new Date().toISOString().slice(0, 10);
@@ -1570,7 +1602,7 @@
            </button>
          </div>`
       : '';
-    box.innerHTML = `${actionBar}${header}<ul class="ramp-list">${items}</ul>${pageFooter}${paginationBtns}${generatedFooter}${unresolvedSection}${pushToCrashBtn}`;
+    box.innerHTML = `${actionBar}${header}<ul class="ramp-list">${items}</ul>${pageFooter}${shownPaginationBtns}${generatedFooter}${unresolvedSection}${pushToCrashBtn}`;
     box.scrollIntoView({ behavior: 'instant', block: 'start' });
   }
 
@@ -1877,7 +1909,14 @@
           featureType: p.type === 'equation' ? 'H' : p.type === 'landmark' ? 'H' : p.type === 'routebreak' ? 'H' : p.type === 'citybegin' ? 'H' : p.type === 'cityend' ? 'H' : p.type === 'intersection' ? 'I' : 'R',
           isCross:     p.isCross    ?? false,
           isSecondEq:  p.isSecondEq ?? false,
-          desc:        p.type === 'ramp' ? (descMap.get(p.name) ?? '') : (p.desc ?? ''),
+          desc:        (() => {
+            const base = p.type === 'ramp' ? (descMap.get(p.name) ?? '') : (p.desc ?? '');
+            if (p.type === 'intersection' && p.crossPmMeasure != null) {
+              const pm = parseFloat(p.crossPmMeasure);
+              return isNaN(pm) ? base : `${base} (${p.crossRouteLabel ?? 'PM'} ${pm.toFixed(3)})`;
+            }
+            return base;
+          })(),
           hwyGroup,
           cityCode,
           county:    p.county      ?? '',

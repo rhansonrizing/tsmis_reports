@@ -142,11 +142,12 @@ function intd_renderPage() {
   box.style.display = 'block';
   box.className = 'ramp-results';
 
+  const paginated  = isPaginated();
   const n          = _intd_allResults.length;
-  const totalPages = Math.ceil(n / INTD_ROWS_PER_PAGE);
-  const page       = _intd_currentPage;
-  const start      = page * INTD_ROWS_PER_PAGE;
-  const slice      = _intd_allResults.slice(start, start + INTD_ROWS_PER_PAGE);
+  const totalPages = paginated ? Math.ceil(n / INTD_ROWS_PER_PAGE) : 1;
+  const page       = paginated ? _intd_currentPage : 0;
+  const start      = paginated ? page * INTD_ROWS_PER_PAGE : 0;
+  const slice      = paginated ? _intd_allResults.slice(start, start + INTD_ROWS_PER_PAGE) : _intd_allResults;
 
   const prevDis = page === 0              ? 'disabled' : '';
   const nextDis = page === totalPages - 1 ? 'disabled' : '';
@@ -185,13 +186,14 @@ function intd_renderPage() {
     </table>
   </div>`;
 
-  const pageFooter = totalPages > 1
+  const pageFooter = paginated && totalPages > 1
     ? `<div class="page-info">Page ${page + 1} of ${totalPages}</div>`
     : '';
+  const shownPagination = paginated ? pagination : '';
 
   const generatedFooter = `<div class="generated-on">Generated on ${esc(_intd_generatedOn)}</div>`;
 
-  box.innerHTML = `${actionBar}<div class="hl-title-gap"></div>${table}${pageFooter}${pagination}${generatedFooter}`;
+  box.innerHTML = `${actionBar}<div class="hl-title-gap"></div>${table}${pageFooter}${shownPagination}${generatedFooter}`;
   box.scrollIntoView({ behavior: 'instant', block: 'start' });
 }
 

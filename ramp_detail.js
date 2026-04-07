@@ -305,10 +305,11 @@
     box.style.display = 'block';
     box.className   = 'ramp-results';
 
-    const totalPages = Math.ceil(_allResults.length / PAGE_SIZE);
-    const page       = _currentPage;
-    const start      = page * PAGE_SIZE;
-    const pageSlice  = _allResults.slice(start, start + PAGE_SIZE);
+    const paginated  = isPaginated();
+    const totalPages = paginated ? Math.ceil(_allResults.length / PAGE_SIZE) : 1;
+    const page       = paginated ? _currentPage : 0;
+    const start      = paginated ? page * PAGE_SIZE : 0;
+    const pageSlice  = paginated ? _allResults.slice(start, start + PAGE_SIZE) : _allResults;
 
     const prevDis = page === 0              ? 'disabled' : '';
     const nextDis = page === totalPages - 1 ? 'disabled' : '';
@@ -349,12 +350,13 @@
 
     const items = pageSlice.map((p, i) => renderItem(p, start + i)).join('');
 
-    const pageFooter = totalPages > 1
+    const pageFooter = paginated && totalPages > 1
       ? `<div class="page-info">Page ${page + 1} of ${totalPages}</div>`
       : '';
+    const shownPaginationBtns = paginated ? paginationBtns : '';
 
     const generatedFooter = `<div class="generated-on">Generated on ${esc(_generatedOn)}</div>`;
 
-    box.innerHTML = `${actionBar}${header}<ul class="ramp-list">${items}</ul>${pageFooter}${paginationBtns}${generatedFooter}`;
+    box.innerHTML = `${actionBar}${header}<ul class="ramp-list">${items}</ul>${pageFooter}${shownPaginationBtns}${generatedFooter}`;
     box.scrollIntoView({ behavior: 'instant', block: 'start' });
   }

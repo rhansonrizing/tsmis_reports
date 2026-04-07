@@ -258,18 +258,18 @@ async function loadCountyCodeDomain() {
     countySel.innerHTML = '<option value="" disabled hidden selected>-- Loading counties\u2026 --</option>';
 
     const params = new URLSearchParams({
-      where:                district ? `District_Code = ${parseInt(district, 10)}` : '1=1',
-      outFields:            'County',
+      where:                district ? `District = ${parseInt(district, 10)}` : '1=1',
+      outFields:            'County_Code',
       returnDistinctValues: 'true',
       returnGeometry:       'false',
-      orderByFields:        'County ASC',
+      orderByFields:        'County_Code ASC',
       ...versionParam(),
       f:                    'json',
       token:                _token
     });
     let data;
     try {
-      const resp = await fetch(`${CONFIG.featureServiceUrl}/215/query?${params}`);
+      const resp = await fetch(`${CONFIG.featureServiceUrl}/85/query?${params}`);
       data = await resp.json();
     } catch (e) {
       console.warn('[onDistrictChange] fetch error:', e.message);
@@ -277,7 +277,7 @@ async function loadCountyCodeDomain() {
       return;
     }
     const counties = Array.isArray(data.features)
-      ? data.features.map(f => f.attributes?.County).filter(v => v != null).sort()
+      ? data.features.map(f => f.attributes?.County_Code).filter(v => v != null).sort()
       : [];
     countySel.innerHTML = '<option value="" disabled hidden selected>-- Select County --</option><option value="">-- ALL --</option>';
     for (const c of counties) {
@@ -626,6 +626,10 @@ async function loadCountyCodeDomain() {
           }
         }
       }
+      // Final tiebreaker: sort by PMMeasure ascending.
+      const aPm = parseFloat(a.pmMeasure);
+      const bPm = parseFloat(b.pmMeasure);
+      if (!isNaN(aPm) && !isNaN(bPm) && aPm !== bPm) return aPm - bPm;
       return 0;
     });
     const grouped = [];
@@ -864,6 +868,10 @@ async function loadCountyCodeDomain() {
     }
   }
 
+  function isPaginated() {
+    return document.getElementById('paginatedCheck')?.checked !== false;
+  }
+
   // ── Shared: State management & route direction ───────────────────────────
 
   function clearResults() {
@@ -1009,6 +1017,33 @@ async function loadCountyCodeDomain() {
         });
       }
     }
+
+    // Translate AR → OD for all ramps so sort position reflects the
+    // reference-date network state rather than the stale stored ODMeasure.
+    const CHUNK = 200;
+    const chunks = chunkArray(pairs, CHUNK);
+    await Promise.all(chunks.map(async chunk => {
+      const locs = chunk.map(p => ({ routeId: p.routeId, measure: p.arMeasure }));
+      const xlateBody = new URLSearchParams({
+        locations:             JSON.stringify(locs),
+        targetNetworkLayerIds: JSON.stringify([5]),
+        ...versionParam(),
+        ...historicMomentParam(),
+        f:     'json',
+        token: _token
+      });
+      const xlateData = await fetch(
+        `${CONFIG.mapServiceUrl}/exts/LRServer/networkLayers/4/translate`,
+        { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: xlateBody.toString() }
+      ).then(r => r.json()).catch(() => ({ locations: [] }));
+      (xlateData.locations ?? []).forEach((loc, idx) => {
+        const xlated = loc.translatedLocations ?? [];
+        const result = xlated.find(r => r.measure != null)
+                    ?? xlated[0];
+        if (result?.measure != null) chunk[idx].odMeasure = String(result.measure);
+      });
+    }));
+
     return pairs;
   }
 

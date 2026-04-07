@@ -416,20 +416,17 @@
     startThinking(btn);
     clearResults();
     try {
-      const [landmarkPairs, { pairs: intersectionPairs }, cityBeginPairs, districtBeginPairs, routeBreakPairs, rampPointPairs, direction] = await Promise.all([
+      const [landmarkPairs, cityBeginPairs, districtBeginPairs, routeBreakPairs, direction] = await Promise.all([
         queryLandmarks(segments, routeSuffix, district, county),
-        queryIntersections(segments, routeNum, district, county),
         queryCityBegins(segments, paddedRoute, district, county),
         hl_queryDistrictBegins(segments, paddedRoute),
         queryRouteBreaks(segments, routeSuffix, district, county),
-        hl_queryRampPoints(segments, routeSuffix, district, county),
         queryRouteDirection(routeNum)
       ]);
-      for (const p of intersectionPairs)   p.desc = '';
       for (const p of cityBeginPairs)      p.desc = '';
       for (const p of routeBreakPairs)     p.desc = '';
       const measureOf = p => parseFloat(p.odMeasure !== '' && p.odMeasure != null ? p.odMeasure : p.arMeasure);
-      const allPairs = hl_groupByAlignment([...landmarkPairs, ...intersectionPairs, ...cityBeginPairs, ...districtBeginPairs, ...routeBreakPairs, ...rampPointPairs]
+      const allPairs = hl_groupByAlignment([...landmarkPairs, ...cityBeginPairs, ...districtBeginPairs, ...routeBreakPairs]
         .filter(p => p.type !== 'districtend')
         .sort((a, b) => measureOf(a) - measureOf(b)));
       const _markerTypes = new Set(['citybegin', 'cityend', 'districtbegin', 'districtend']);
@@ -509,20 +506,17 @@
       if (segments.length === 0) { hl_showResults('error', 'Translation failed.'); return; }
       const paddedRouteNum = from.routeNum.padStart(3, '0');
       const routeSuffix    = from.routeSuffix === '.' ? '' : from.routeSuffix;
-      const [landmarkPairs, { pairs: intersectionPairs }, cityBeginPairs, districtBeginPairs, routeBreakPairs, rampPointPairs, direction] = await Promise.all([
+      const [landmarkPairs, cityBeginPairs, districtBeginPairs, routeBreakPairs, direction] = await Promise.all([
         queryLandmarks(segments, routeSuffix),
-        queryIntersections(segments, from.routeNum),
         queryCityBegins(segments, paddedRouteNum),
         hl_queryDistrictBegins(segments, paddedRouteNum),
         queryRouteBreaks(segments, routeSuffix),
-        hl_queryRampPoints(segments, routeSuffix),
         queryRouteDirection(paddedRouteNum)
       ]);
-      for (const p of intersectionPairs)   p.desc = '';
       for (const p of cityBeginPairs)      p.desc = '';
       for (const p of routeBreakPairs)     p.desc = '';
       const measureOf = p => parseFloat(p.odMeasure !== '' && p.odMeasure != null ? p.odMeasure : p.arMeasure);
-      const allPairs = hl_groupByAlignment([...landmarkPairs, ...intersectionPairs, ...cityBeginPairs, ...districtBeginPairs, ...routeBreakPairs, ...rampPointPairs]
+      const allPairs = hl_groupByAlignment([...landmarkPairs, ...cityBeginPairs, ...districtBeginPairs, ...routeBreakPairs]
         .filter(p => p.type !== 'districtend')
         .sort((a, b) => measureOf(a) - measureOf(b)));
       const _markerTypes = new Set(['citybegin', 'cityend', 'districtbegin', 'districtend']);
@@ -720,10 +714,11 @@
     box.style.display = 'block';
     box.className = 'ramp-results';
 
+    const paginated  = isPaginated();
     const pages      = hl_getPageBoundaries();
     const totalPages = pages.length;
-    const page       = _hl_currentPage;
-    const { start, end } = pages[page] ?? { start: 0, end: _hl_allResults.length };
+    const page       = paginated ? _hl_currentPage : 0;
+    const { start, end } = paginated ? (pages[page] ?? { start: 0, end: _hl_allResults.length }) : { start: 0, end: _hl_allResults.length };
     const slice = _hl_allResults.slice(start, end);
 
     const prevDis = page === 0              ? 'disabled' : '';
@@ -756,11 +751,12 @@
       </table>
     </div>`;
 
-    const pageFooter = totalPages > 1
+    const pageFooter = paginated && totalPages > 1
       ? `<div class="page-info">Page ${page + 1} of ${totalPages}</div>`
       : '';
+    const shownPagination = paginated ? pagination : '';
     const generatedFooter = `<div class="generated-on">Generated on ${esc(_hl_generatedOn)}</div>`;
-    box.innerHTML = `${actionBar}<div class="hl-title-gap"></div>${table}${pageFooter}${pagination}${generatedFooter}`;
+    box.innerHTML = `${actionBar}<div class="hl-title-gap"></div>${table}${pageFooter}${shownPagination}${generatedFooter}`;
     box.scrollIntoView({ behavior: 'instant', block: 'start' });
   }
 
