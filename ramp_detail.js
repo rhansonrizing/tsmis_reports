@@ -94,20 +94,28 @@
   }
 
   // Returns a Map of name → fieldName value for range-based event layers (e.g. 116, 74)
-  // _S records fall back to _P routeId — layers 116/74 only carry _P alignments
+  // For _S records, both _P and _S RouteIDs are queried — city/HG ranges on L independent
+  // alignments may be stored under _S and would be missed if only _P is queried.
   async function queryRangeLayer(pairs, layerNum, fieldName, fromField = 'FromARMeasure', toField = 'ToARMeasure') {
     const CHUNK = 100;
     const chunks = chunkArray(pairs, CHUNK);
 
     const allFeatures = (await Promise.all(chunks.map(async chunk => {
-      const orClauses = chunk.map(p => {
-        const rid = p.routeId.endsWith('_S') ? p.routeId.slice(0, -2) + '_P' : p.routeId;
+      const clauseSet = new Set();
+      for (const p of chunk) {
+        const isS = p.routeId.endsWith('_S');
+        const rid  = isS ? p.routeId.slice(0, -2) + '_P' : p.routeId;
+        const ridS = isS ? p.routeId : null;
         // Prefer odMeasure for the range lookup — it reflects the OD position on
         // the main alignment and avoids the _S→_P translation mismatch that can
         // place a feature inside the wrong highway-group / city-code segment.
         const m = (p.odMeasure !== '' && p.odMeasure != null) ? parseFloat(p.odMeasure) : p.arMeasure;
-        return `(RouteID = '${rid}' AND ${fromField} <= ${m} AND ${toField} >= ${m})`;
-      }).join(' OR ');
+        clauseSet.add(`(RouteID = '${rid}' AND ${fromField} <= ${m} AND ${toField} >= ${m})`);
+        // For _S records also query the _S RouteID — city ranges on L independent
+        // alignments are stored against _S and won't appear under _P.
+        if (ridS) clauseSet.add(`(RouteID = '${ridS}' AND ${fromField} <= ${m} AND ${toField} >= ${m})`);
+      }
+      const orClauses = [...clauseSet].join(' OR ');
       const body = new URLSearchParams({
         where:          `(${orClauses})${getDateFilter()}`,
         outFields:      `RouteID,${fromField},${toField},${fieldName}`,
@@ -143,14 +151,36 @@
     }
     const map = new Map();
     for (const p of pairs) {
-      const lookupId   = p.routeId.endsWith('_S') ? p.routeId.slice(0, -2) + '_P' : p.routeId;
+      const isS       = p.routeId.endsWith('_S');
+      const lookupId  = isS ? p.routeId.slice(0, -2) + '_P' : p.routeId;
+      const lookupIdS = isS ? p.routeId : null;
       const m = (p.odMeasure !== '' && p.odMeasure != null) ? parseFloat(p.odMeasure) : p.arMeasure;
-      const candidates = byRoute.get(lookupId) ?? [];
-      const matches = candidates.filter(f => {
+      const candidatesP = byRoute.get(lookupId)  ?? [];
+      const candidatesS = lookupIdS ? (byRoute.get(lookupIdS) ?? []) : [];
+      const tryMatch = (cands) => cands.filter(f => {
         const from = f.attributes?.[fromField];
         const to   = f.attributes?.[toField];
         return from != null && to != null && m >= from && m <= to;
       });
+      // For _S records prefer _S candidates (city stored on secondary alignment);
+      // fall back to _P candidates if no _S match found.
+      let matches = isS ? tryMatch(candidatesS) : [];
+      if (matches.length === 0) matches = tryMatch(candidatesP);
+      // For independent-alignment records the OD measure projects onto the main alignment
+      // and can exceed the layer's AR-based range boundary. Fall back to AR measure when
+      // the OD lookup returns nothing and AR differs from OD.
+      if (matches.length === 0 && p.arMeasure != null && p.arMeasure !== m) {
+        if (isS) matches = candidatesS.filter(f => {
+          const from = f.attributes?.[fromField];
+          const to   = f.attributes?.[toField];
+          return from != null && to != null && p.arMeasure >= from && p.arMeasure <= to;
+        });
+        if (matches.length === 0) matches = candidatesP.filter(f => {
+          const from = f.attributes?.[fromField];
+          const to   = f.attributes?.[toField];
+          return from != null && to != null && p.arMeasure >= from && p.arMeasure <= to;
+        });
+      }
       // When multiple ranges share the same boundary point, prefer the one whose
       // from-measure is highest — i.e. the range that *starts* at the boundary
       // rather than the range that merely *ends* there.

@@ -345,7 +345,7 @@
 
     .hsl-ramp-col-template {
       display: grid;
-      grid-template-columns: minmax(0,0.4fr) minmax(0,0.55fr) minmax(0,0.7fr) minmax(0,0.3fr) 8ch minmax(0,0.4fr) minmax(0,0.175fr) minmax(0,0.3fr) minmax(0,1.1fr) minmax(0,4fr);
+      grid-template-columns: minmax(0,0.55fr) minmax(0,0.7fr) minmax(0,0.3fr) 8ch minmax(0,0.4fr) minmax(0,0.175fr) minmax(0,0.3fr) minmax(0,1.1fr) minmax(0,4fr) 8ch;
       gap: 0.5rem;
       align-items: center;
     }
@@ -960,12 +960,17 @@
     .hsl-item-ia-l > span { }
 
     @page { margin-top: 0; }
+    .hsl-print-header { display: none; }
     @media print {
       body { background: none; padding: 0; }
       .card { box-shadow: none !important; padding: 0; }
       .caltrans-logo, #modeSelector, .page-header, #loginPrompt, #routeForm, #appForm, #districtRouteForm,
       #controlsGrid, .report-action-bar, .pagination-left, .pagination-right, .page-info,
       .generated-on { display: none !important; }
+      .hsl-print-header { display: block; text-align: center; margin-bottom: 0.5rem; }
+      .hsl-print-header-line1 { font-size: 1.2rem; font-weight: 600; }
+      .hsl-print-header-line2 { font-size: 1.1rem; }
+      .hsl-print-header-line3 { font-size: 0.95rem; margin-top: 0.3rem; }
       #rampResults { display: block !important; border: none; margin: 0; padding: 0; }
       * { box-shadow: none !important; }
       .ramp-pagination { display: none !important; }

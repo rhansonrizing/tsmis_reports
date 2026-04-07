@@ -580,15 +580,52 @@ async function loadCountyCodeDomain() {
       const bOd = parseFloat(b.odMeasure);
       // Treat missing OD as Infinity so NaN records don't break comparator
       // consistency (which corrupts TimSort for all nearby records).
-      const aVal = isNaN(aOd) ? Infinity : aOd;
-      const bVal = isNaN(bOd) ? Infinity : bOd;
+      // Round to 3 decimal places before comparing so that two OD values that
+      // agree to 3dp (e.g. 239.2454 vs 239.2466) are treated as co-located and
+      // fall through to the tiebreak rules below rather than sorting by raw OD.
+      const aVal = isNaN(aOd) ? Infinity : Math.round(aOd * 1000) / 1000;
+      const bVal = isNaN(bOd) ? Infinity : Math.round(bOd * 1000) / 1000;
       const diff = aVal - bVal;
-      if (Math.abs(diff) > 0.001) return diff;
+      if (diff !== 0) return diff;
       // At the same OD position: route breaks first, equation points last.
       if (a.type === 'routebreak' && b.type !== 'routebreak') return -1;
       if (a.type !== 'routebreak' && b.type === 'routebreak') return 1;
-      if (a.pmSuffix === 'E' && b.pmSuffix !== 'E') return 1;
-      if (a.pmSuffix !== 'E' && b.pmSuffix === 'E') return -1;
+      // E-suffix tiebreak does not apply to equation records — eq2 uses pmSuffix='E'
+      // as a marker but must fall through to the equation tiebreak below.
+      if (a.pmSuffix === 'E' && b.pmSuffix !== 'E' && a.type !== 'equation') return 1;
+      if (a.pmSuffix !== 'E' && b.pmSuffix === 'E' && b.type !== 'equation') return -1;
+      // Same PM combination: H-type features (landmarks, equations, etc.) sort before I-type (intersections).
+      if (`${a.pmPrefix}|${a.pmMeasure}|${a.pmSuffix}` === `${b.pmPrefix}|${b.pmMeasure}|${b.pmSuffix}`) {
+        const aIsI = a.type === 'intersection';
+        const bIsI = b.type === 'intersection';
+        if (!aIsI && bIsI) return -1;
+        if (aIsI && !bIsI) return 1;
+      }
+      // Equation point tiebreak: when a non-equation record shares OD with an eq2 record,
+      // place it before the pair if its PM matches eq1 (source measure),
+      // or after the pair if its PM matches eq2 (the "EQUATES TO" measure).
+      const aIsEq2 = a.type === 'equation' && a.isSecondEq;
+      const bIsEq2 = b.type === 'equation' && b.isSecondEq;
+      if (aIsEq2 !== bIsEq2) {
+        const eq2   = aIsEq2 ? a : b;
+        const other = aIsEq2 ? b : a;
+        const eq1   = eq1ById.get(eq2.eqPairId);
+        if (eq1) {
+          const otherPm = parseFloat(other.pmMeasure);
+          const eq1Pm   = parseFloat(eq1.pmMeasure);
+          const eq2Pm   = parseFloat(eq2.pmMeasure);
+          if (!isNaN(otherPm)) {
+            if (!isNaN(eq1Pm) && Math.abs(otherPm - eq1Pm) < 0.001) {
+              // other PM matches eq1 (source) → other goes before the pair
+              return aIsEq2 ? 1 : -1;
+            }
+            if (!isNaN(eq2Pm) && Math.abs(otherPm - eq2Pm) < 0.001) {
+              // other PM matches eq2 → other goes after the pair
+              return aIsEq2 ? -1 : 1;
+            }
+          }
+        }
+      }
       return 0;
     });
     const grouped = [];
@@ -601,22 +638,40 @@ async function loadCountyCodeDomain() {
         // carry pmPrefix='.' rather than 'R', so we use hgValue exclusively.
         while (i < main.length) {
           const cur = main[i];
-          if (cur.pmSuffix === 'R' || cur.pmSuffix === 'L') {
+          if (cur.pmSuffix === 'R' || cur.pmSuffix === 'L' || cur.hgValue === 'R' || cur.hgValue === 'L') {
             i++;
           } else if (cur.pmSuffix === 'E') {
             i++;
-          } else if (cur.hgValue === 'R' || cur.hgValue === 'L') {
-            i++;
+            break; // E terminates the independent alignment section
           } else {
-            break;
+            // Dot-suffix, non-hgValue record — look ahead for more R/L records
+            // before the next E. If found, this record falls between the R and L
+            // sub-sections and belongs in the section's trailing bucket.
+            let hasMoreRL = false;
+            for (let k = i + 1; k < main.length; k++) {
+              const la = main[k];
+              if (la.pmSuffix === 'E') break; // reached section end — no more R/L
+              if (la.pmSuffix === 'R' || la.pmSuffix === 'L' || la.hgValue === 'R' || la.hgValue === 'L') {
+                hasMoreRL = true;
+                break;
+              }
+            }
+            if (hasMoreRL) { i++; } else { break; }
           }
         }
         const section = main.slice(j, i);
-        // R group: pmSuffix='R' ramps OR dot-records in HG 'R'
-        grouped.push(...section.filter(p => p.pmSuffix === 'R' || (p.pmSuffix !== 'L' && p.pmSuffix !== 'E' && p.hgValue === 'R')));
-        // L group: pmSuffix='L' ramps OR dot-records in HG 'L'
-        grouped.push(...section.filter(p => p.pmSuffix === 'L' || (p.pmSuffix !== 'R' && p.pmSuffix !== 'E' && p.hgValue === 'L')));
+        // R group: only R-suffix records confirmed on the R alignment by hgValue.
+        // R-suffix records with empty hgValue are not confirmed as R-alignment and
+        // go to the trailing bucket after the L group.
+        grouped.push(...section.filter(p => p.pmSuffix === 'R' && p.hgValue === 'R'));
+        // L group: all L-suffix records
+        grouped.push(...section.filter(p => p.pmSuffix === 'L'));
+        // E-suffix end markers
         grouped.push(...section.filter(p => p.pmSuffix === 'E'));
+        // Trailing: dot-suffix records (END INDEP ALIGN landmarks via hgValue),
+        // then R-suffix records not confirmed by hgValue
+        grouped.push(...section.filter(p => p.pmSuffix !== 'R' && p.pmSuffix !== 'L' && p.pmSuffix !== 'E'));
+        grouped.push(...section.filter(p => p.pmSuffix === 'R' && p.hgValue !== 'R'));
       } else {
         grouped.push(main[i++]);
       }
