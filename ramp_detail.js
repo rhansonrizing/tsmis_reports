@@ -103,16 +103,26 @@
     const allFeatures = (await Promise.all(chunks.map(async chunk => {
       const clauseSet = new Set();
       for (const p of chunk) {
-        const isS = p.routeId.endsWith('_S');
-        const rid  = isS ? p.routeId.slice(0, -2) + '_P' : p.routeId;
+        // Detect secondary-alignment RouteIDs in both formats:
+        //   _S suffix  — used by segment fromBest.routeId  (e.g. "04MRN0580_S")
+        //   plain S    — used by layer-132 ramp RouteIDs   (e.g. "04MRN0580S")
+        const isUnderscoreS = p.routeId.endsWith('_S');
+        const isPlainS      = !isUnderscoreS && p.routeId.endsWith('S');
+        const isS  = isUnderscoreS || isPlainS;
+        const rid  = isUnderscoreS ? p.routeId.slice(0, -2) + '_P'
+                   : isPlainS      ? p.routeId.slice(0, -1) + 'P'
+                   : p.routeId;
         const ridS = isS ? p.routeId : null;
-        // Prefer odMeasure for the range lookup — it reflects the OD position on
-        // the main alignment and avoids the _S→_P translation mismatch that can
-        // place a feature inside the wrong highway-group / city-code segment.
-        const m = (p.odMeasure !== '' && p.odMeasure != null) ? parseFloat(p.odMeasure) : p.arMeasure;
+        // Layer 116 (Highway Group) stores ranges in AR coordinates — always use
+        // arMeasure so the lookup isn't thrown off by OD/AR divergence near
+        // realignments or junctions.  All other layers (74, 85, etc.) use OD so
+        // the lookup reflects reference-date network position.
+        const m = (layerNum === 116)
+          ? p.arMeasure
+          : ((p.odMeasure !== '' && p.odMeasure != null) ? parseFloat(p.odMeasure) : p.arMeasure);
         clauseSet.add(`(RouteID = '${rid}' AND ${fromField} <= ${m} AND ${toField} >= ${m})`);
-        // For _S records also query the _S RouteID — city ranges on L independent
-        // alignments are stored against _S and won't appear under _P.
+        // For _S / plain-S records also query the S RouteID — city ranges on L
+        // independent alignments are stored against _S and won't appear under _P.
         if (ridS) clauseSet.add(`(RouteID = '${ridS}' AND ${fromField} <= ${m} AND ${toField} >= ${m})`);
       }
       const orClauses = [...clauseSet].join(' OR ');
@@ -151,10 +161,16 @@
     }
     const map = new Map();
     for (const p of pairs) {
-      const isS       = p.routeId.endsWith('_S');
-      const lookupId  = isS ? p.routeId.slice(0, -2) + '_P' : p.routeId;
+      const isUnderscoreS = p.routeId.endsWith('_S');
+      const isPlainS      = !isUnderscoreS && p.routeId.endsWith('S');
+      const isS       = isUnderscoreS || isPlainS;
+      const lookupId  = isUnderscoreS ? p.routeId.slice(0, -2) + '_P'
+                      : isPlainS      ? p.routeId.slice(0, -1) + 'P'
+                      : p.routeId;
       const lookupIdS = isS ? p.routeId : null;
-      const m = (p.odMeasure !== '' && p.odMeasure != null) ? parseFloat(p.odMeasure) : p.arMeasure;
+      const m = (layerNum === 116)
+        ? p.arMeasure
+        : ((p.odMeasure !== '' && p.odMeasure != null) ? parseFloat(p.odMeasure) : p.arMeasure);
       const candidatesP = byRoute.get(lookupId)  ?? [];
       const candidatesS = lookupIdS ? (byRoute.get(lookupIdS) ?? []) : [];
       const tryMatch = (cands) => cands.filter(f => {
@@ -162,14 +178,13 @@
         const to   = f.attributes?.[toField];
         return from != null && to != null && m >= from && m <= to;
       });
-      // For _S records prefer _S candidates (city stored on secondary alignment);
-      // fall back to _P candidates if no _S match found.
+      // For secondary-alignment records prefer S candidates (city stored on secondary);
+      // fall back to P candidates if no S match found (HG stored on primary).
       let matches = isS ? tryMatch(candidatesS) : [];
       if (matches.length === 0) matches = tryMatch(candidatesP);
-      // For independent-alignment records the OD measure projects onto the main alignment
-      // and can exceed the layer's AR-based range boundary. Fall back to AR measure when
-      // the OD lookup returns nothing and AR differs from OD.
-      if (matches.length === 0 && p.arMeasure != null && p.arMeasure !== m) {
+      // For non-116 layers: OD measure may diverge from AR; fall back to AR when
+      // the OD lookup returns nothing.
+      if (layerNum !== 116 && matches.length === 0 && p.arMeasure != null && p.arMeasure !== m) {
         if (isS) matches = candidatesS.filter(f => {
           const from = f.attributes?.[fromField];
           const to   = f.attributes?.[toField];

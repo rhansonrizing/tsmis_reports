@@ -575,6 +575,24 @@ async function loadCountyCodeDomain() {
       return true;
     });
 
+    // Build a map: Route Break OD → its paired Route Resume, for tiebreak use.
+    // Pair each Route Break with the nearest Route Resume at a higher OD.
+    const rbBreaks  = main.filter(p => p.type === 'routebreak' && p.desc === 'Route Break');
+    const rbResumes = main.filter(p => p.type === 'routebreak' && p.desc === 'Route Resume');
+    const rbResumeForBreak = new Map(); // break.name → resume pair
+    for (const brk of rbBreaks) {
+      const brkOd = parseFloat(brk.odMeasure);
+      const paired = rbResumes
+        .filter(r => parseFloat(r.odMeasure) >= brkOd)
+        .sort((x, y) => parseFloat(x.odMeasure) - parseFloat(y.odMeasure))[0];
+      if (paired) rbResumeForBreak.set(brk.name, paired);
+    }
+    // Build reverse map: resume.name → its Route Break
+    const rbBreakForResume = new Map();
+    for (const [brkName, resume] of rbResumeForBreak) {
+      rbBreakForResume.set(resume.name, main.find(p => p.name === brkName));
+    }
+
     main.sort((a, b) => {
       const aOd = parseFloat(a.odMeasure);
       const bOd = parseFloat(b.odMeasure);
@@ -587,19 +605,51 @@ async function loadCountyCodeDomain() {
       const bVal = isNaN(bOd) ? Infinity : Math.round(bOd * 1000) / 1000;
       const diff = aVal - bVal;
       if (diff !== 0) return diff;
-      // At the same OD position: route breaks first, equation points last.
-      if (a.type === 'routebreak' && b.type !== 'routebreak') return -1;
-      if (a.type !== 'routebreak' && b.type === 'routebreak') return 1;
+      // Two route break records at the same OD: Route Break before Route Resume.
+      if (a.type === 'routebreak' && b.type === 'routebreak') {
+        if (a.desc === 'Route Break' && b.desc !== 'Route Break') return -1;
+        if (a.desc !== 'Route Break' && b.desc === 'Route Break') return 1;
+      }
       // E-suffix tiebreak does not apply to equation records — eq2 uses pmSuffix='E'
       // as a marker but must fall through to the equation tiebreak below.
       if (a.pmSuffix === 'E' && b.pmSuffix !== 'E' && a.type !== 'equation') return 1;
       if (a.pmSuffix !== 'E' && b.pmSuffix === 'E' && b.type !== 'equation') return -1;
-      // Same PM combination: H-type features (landmarks, equations, etc.) sort before I-type (intersections).
+      // Same PM combination: H (landmarks/equations/etc.) before I (intersections) before R (ramps).
       if (`${a.pmPrefix}|${a.pmMeasure}|${a.pmSuffix}` === `${b.pmPrefix}|${b.pmMeasure}|${b.pmSuffix}`) {
-        const aIsI = a.type === 'intersection';
-        const bIsI = b.type === 'intersection';
-        if (!aIsI && bIsI) return -1;
-        if (aIsI && !bIsI) return 1;
+        const ftOf = p => {
+          if (p.type === 'equation' || p.type === 'landmark' || p.type === 'routebreak' ||
+              p.type === 'citybegin' || p.type === 'cityend') return 0; // H
+          if (p.type === 'intersection') return 1;                       // I
+          return 2;                                                       // R (ramp)
+        };
+        const diff = ftOf(a) - ftOf(b);
+        if (diff !== 0) return diff;
+      }
+      // Route break tiebreak: when a non-routebreak record shares OD with a Route Break or
+      // Route Resume, place it before the pair if PM matches Route Break, after if PM matches Resume.
+      const aIsRb = a.type === 'routebreak';
+      const bIsRb = b.type === 'routebreak';
+      if (aIsRb !== bIsRb) {
+        const rb    = aIsRb ? a : b;
+        const other = aIsRb ? b : a;
+        const otherPm = parseFloat(other.pmMeasure);
+        if (!isNaN(otherPm)) {
+          // Find the break/resume pair members regardless of which one we're comparing against
+          const isBreak  = rb.desc === 'Route Break';
+          const isResume = rb.desc === 'Route Resume';
+          const brk    = isBreak  ? rb : rbBreakForResume.get(rb.name);
+          const resume = isResume ? rb : rbResumeForBreak.get(rb.name);
+          const brkPm    = brk    ? parseFloat(brk.pmMeasure)    : NaN;
+          const resumePm = resume ? parseFloat(resume.pmMeasure) : NaN;
+          if (!isNaN(brkPm) && Math.abs(otherPm - brkPm) < 0.001) {
+            // PM matches Route Break → other goes before the pair
+            return aIsRb ? 1 : -1;
+          }
+          if (!isNaN(resumePm) && Math.abs(otherPm - resumePm) < 0.001) {
+            // PM matches Route Resume → other goes after the pair
+            return aIsRb ? -1 : 1;
+          }
+        }
       }
       // Equation point tiebreak: when a non-equation record shares OD with an eq2 record,
       // place it before the pair if its PM matches eq1 (source measure),
@@ -926,19 +976,25 @@ async function loadCountyCodeDomain() {
   async function queryAttributeSet(segments, district = null, county = null) {
     // Build one OR clause per segment (each segment is one alignment: R or L)
     // Small epsilon on both bounds absorbs floating-point drift from translate API
-    const segClauses = segments.map(({ fromBest, toBest }) => {
+    const segClauses = segments.flatMap(({ fromBest, toBest }) => {
+      const rid   = fromBest.routeId.endsWith('_S') ? fromBest.routeId.slice(0, -2) + '_P' : fromBest.routeId;
+      const ridS  = rid.slice(0, -1) + 'S';
       const fromM = Math.min(fromBest.measure, toBest.measure) - 0.005;
       const toM   = Math.max(fromBest.measure, toBest.measure) + 0.005;
-      return `(RouteID = '${fromBest.routeId}' AND ARMeasure >= ${fromM} AND ARMeasure <= ${toM})`;
+      return [
+        `(RouteID = '${rid}' AND ARMeasure >= ${fromM} AND ARMeasure <= ${toM})`,
+        `(RouteID = '${ridS}' AND ARMeasure >= ${fromM} AND ARMeasure <= ${toM})`
+      ];
     });
+    const uniqueSegClauses = [...new Set(segClauses)];
 
     const dateFilter     = getDateFilter();
     const districtFilter = district != null ? ` AND District = ${parseInt(district, 10)}` : '';
     const resolvedCounty = normalizeCountyCode(county);
     const countyFilter   = resolvedCounty != null ? ` AND County = '${resolvedCounty.replace(/'/g, "''")}'` : '';
-    const where = segClauses.length === 1
-      ? segClauses[0].slice(1, -1) + districtFilter + countyFilter + ' AND LRSToDate IS NULL' + dateFilter
-      : `(${segClauses.join(' OR ')})${districtFilter}${countyFilter} AND LRSToDate IS NULL${dateFilter}`;
+    const where = uniqueSegClauses.length === 1
+      ? uniqueSegClauses[0].slice(1, -1) + districtFilter + countyFilter + ' AND LRSToDate IS NULL' + dateFilter
+      : `(${uniqueSegClauses.join(' OR ')})${districtFilter}${countyFilter} AND LRSToDate IS NULL${dateFilter}`;
 
 
     // Layer 132 is a point event layer — use standard feature layer query
@@ -1043,7 +1099,6 @@ async function loadCountyCodeDomain() {
         if (result?.measure != null) chunk[idx].odMeasure = String(result.measure);
       });
     }));
-
     return pairs;
   }
 
