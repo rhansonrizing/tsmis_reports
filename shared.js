@@ -697,9 +697,17 @@ async function loadCountyCodeDomain() {
         }
       }
       // Final tiebreaker: sort by PMMeasure ascending.
+      // Exception: at a county boundary the PM resets (e.g. 24.750 → 0.000 at the same AR).
+      // Detect this when one value is near-zero and the difference is large — in that case
+      // the higher PM belongs to the ending county and must sort first.
       const aPm = parseFloat(a.pmMeasure);
       const bPm = parseFloat(b.pmMeasure);
-      if (!isNaN(aPm) && !isNaN(bPm) && aPm !== bPm) return aPm - bPm;
+      if (!isNaN(aPm) && !isNaN(bPm) && aPm !== bPm) {
+        const minPm = Math.min(aPm, bPm);
+        const maxPm = Math.max(aPm, bPm);
+        if (minPm < 0.5 && maxPm - minPm > 5) return bPm - aPm; // county PM reset: larger PM first
+        return aPm - bPm;
+      }
       return 0;
     });
     const isIABoundaryRec = p => p.type === 'landmark' && (

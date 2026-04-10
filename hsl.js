@@ -439,10 +439,16 @@
     const pairs = [];
     xlatePoints.forEach((tp, idx) => {
       const arXlated  = (arData.locations ?? [])[idx]?.translatedLocations ?? [];
-      const arResult   = arXlated.find(r => r.measure != null && r.routeId?.includes(routeNumDigits))
+      // Prefer SHS_ (standard highway system) routes over MERGE_/concurrent routes,
+      // which can have near-zero measures that don't reflect main-route position.
+      const arResult   = arXlated.find(r => r.measure != null && r.routeId?.startsWith('SHS_') && r.routeId?.includes(routeNumDigits) && !r.routeId?.endsWith('_S'))
+                      ?? arXlated.find(r => r.measure != null && r.routeId?.startsWith('SHS_') && r.routeId?.includes(routeNumDigits))
+                      ?? arXlated.find(r => r.measure != null && r.routeId?.includes(routeNumDigits) && !r.routeId?.endsWith('_S'))
+                      ?? arXlated.find(r => r.measure != null && r.routeId?.includes(routeNumDigits))
                       ?? arXlated.find(r => r.measure != null);
       const arMeasure  = arResult?.measure ?? null;
       const inRange    = arMeasure != null && arMeasure >= segArMin && arMeasure <= segArMax;
+      console.log(`[iaBdry] ${tp.suffix} ${tp.isBegin ? 'begin' : 'end'} routeId=${tp.routeId} measure=${tp.measure} | arAll=`, arXlated.map(r => `${r.routeId}:${r.measure}`), `| arPicked=${arResult?.routeId}:${arMeasure} inRange=${inRange}`);
       if (!inRange) return;
 
       const odXlated  = (odData.locations ?? [])[idx]?.translatedLocations ?? [];
@@ -478,95 +484,167 @@
     return pairs;
   }
 
-  // ── HSL: Query equation points (layer 305) ────────────────────────────────
+  // ── HSL: Query equation points from calibration points (layer 1) ──────────
+  // Finds equation point pairs by querying NetworkId=2 calibration points,
+  // translating them to AllRoads AR, then pairing points within 0.001 AR.
 
-  /** Queries PM equation points from layer 305. Note: layer 305 uses 2-char county codes (e.g. 'LA'), not 3-char. */
-  async function queryEquationPoints(segments, district = null, county = null) {
-    const segClauses = segments.map(({ fromBest, toBest }) => {
-      const fromM = Math.min(fromBest.measure, toBest.measure) - 0.005;
-      const toM   = Math.max(fromBest.measure, toBest.measure) + 0.005;
-      return `(routeId = '${fromBest.routeId}' AND fromMeasure >= ${fromM} AND fromMeasure <= ${toM})`;
-    });
-    const uniqueClauses   = [...new Set(segClauses)];
-    const districtFilter  = district != null ? ` AND District_Code = ${district}` : '';
-    const resolvedCountyE = county ? (_countyNameToCode.get(county) ?? county) : null;
-    const countyFilter    = resolvedCountyE != null ? ` AND County = '${resolvedCountyE.replace(/'/g, "''")}'` : '';
-    const where = uniqueClauses.length === 1
-      ? uniqueClauses[0].slice(1, -1) + ' AND hslDescription IS NOT NULL AND LRSToDate IS NULL' + districtFilter + countyFilter
-      : `(${uniqueClauses.join(' OR ')}) AND hslDescription IS NOT NULL AND LRSToDate IS NULL${districtFilter}${countyFilter}`;
+  async function queryEquationPointsFromNetwork(segments, routeNumDigits, district = null, county = null) {
+    if (!segments.length) return [];
+
+    // Build RouteId LIKE clause using county code + route number (PM network format, e.g. 'HUM254')
+    const resolvedCounty = county ? normalizeCountyCode(county) : null;
+    if (!resolvedCounty) return []; // county required to scope PM routeId lookup
+    const routePrefix = `${resolvedCounty}${routeNumDigits}`;
+    const where = `NetworkId = 2 AND RouteId LIKE '${routePrefix}%'`;
+
     const body = new URLSearchParams({
       where,
-      outFields:      'OBJECTID,routeId,fromMeasure,District_Code,hslDescription,PMMeasure,PMPrefix,PMSuffix,ODMeasure,County',
-      orderByFields:  'fromMeasure ASC',
+      outFields:      'RouteId,Measure',
       returnGeometry: 'false',
       ...versionParam(),
       f:              'json',
       token:          _token
     });
-    let resp, data;
+    let data;
     try {
-      resp = await fetch(`${CONFIG.mapServiceUrl}/305/query`, {
-        method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString()
+      const resp = await fetch(`${CONFIG.mapServiceUrl}/1/query`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body:    body.toString()
       });
       data = await resp.json();
     } catch (e) {
-      console.error('[queryEquationPoints] error:', e.message);
+      console.error('[queryEquationPointsFromNetwork] error:', e.message);
       return [];
     }
     if (data.error) {
       const code = data.error.code;
       if (code === 498 || code === 499) { _token = null; login(); return []; }
-      console.error(`[queryEquationPoints] API error ${code}: ${data.error.message}`);
+      console.error(`[queryEquationPointsFromNetwork] API error ${code}: ${data.error.message}`);
       return [];
     }
-    const features = data.features;
-    if (!Array.isArray(features)) return [];
-    const groups = new Map();
-    for (const f of features) {
-      const a = f.attributes ?? {};
-      const routeNum = (a.routeId ?? '').match(/\d{3}/)?.[0] ?? a.routeId ?? '';
-      const key = `${routeNum}_${Math.round((a.fromMeasure ?? 0) * 1000)}`;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(a);
-    }
-    const pairs = [];
-    for (const [key, group] of groups.entries()) {
-      group.sort((a, b) => (a.fromMeasure ?? 0) - (b.fromMeasure ?? 0));
-      const first  = group[0];
-      const second = group[1] ?? null;
-      pairs.push({
-        type:        'equation',
-        eqPairId:    key,
-        name:        `eq1_${first.routeId}_${first.fromMeasure}`,
-        desc:        first.hslDescription ?? '',
-        routeId:     first.routeId,
-        arMeasure:   first.fromMeasure,
-        county:      first.County      ?? '',
-        pmPrefix:    first.PMPrefix    ?? '',
-        pmSuffix:    first.PMSuffix    ?? '.',
-        pmMeasure:   first.PMMeasure   ?? '',
-        odMeasure:   first.ODMeasure   != null ? String(first.ODMeasure) : '',
-        district:    first.District_Code != null ? String(first.District_Code).padStart(2, '0') : '',
-        isSecondEq:  false
+
+    const features = (data.features ?? []).filter(f => f.attributes?.RouteId != null && f.attributes?.Measure != null && f.attributes.RouteId.endsWith('R'));
+    if (!features.length) return [];
+
+    // Translate all calibration points to AR (layer 4) and OD (layer 5) simultaneously
+    const xlateUrl = `${CONFIG.mapServiceUrl}/exts/LRServer/networkLayers/3/translate`;
+    const headers  = { 'Content-Type': 'application/x-www-form-urlencoded' };
+    const locs     = features.map(f => ({ routeId: f.attributes.RouteId, measure: f.attributes.Measure }));
+    const makeBody = targetIds => new URLSearchParams({
+      locations:             JSON.stringify(locs),
+      targetNetworkLayerIds: JSON.stringify(targetIds),
+      ...versionParam(),
+      ...historicMomentParam(),
+      f:     'json',
+      token: _token
+    }).toString();
+
+    const [arData, odData] = await Promise.all([
+      fetch(xlateUrl, { method: 'POST', headers, body: makeBody([4]) }).then(r => r.json()).catch(() => ({ locations: [] })),
+      fetch(xlateUrl, { method: 'POST', headers, body: makeBody([5]) }).then(r => r.json()).catch(() => ({ locations: [] }))
+    ]);
+
+    const segArMin = Math.min(...segments.map(s => Math.min(s.fromBest.measure, s.toBest.measure))) - 0.01;
+    const segArMax = Math.max(...segments.map(s => Math.max(s.fromBest.measure, s.toBest.measure))) + 0.01;
+
+    // Build translated point list filtered to segment AR range
+    const points = [];
+    features.forEach((f, idx) => {
+      const a = f.attributes;
+      const arXlated = (arData.locations ?? [])[idx]?.translatedLocations ?? [];
+      const arResult = arXlated.find(r => r.measure != null && r.routeId?.startsWith('SHS_') && r.routeId?.includes(routeNumDigits) && !r.routeId?.endsWith('_S'))
+                    ?? arXlated.find(r => r.measure != null && r.routeId?.startsWith('SHS_') && r.routeId?.includes(routeNumDigits))
+                    ?? arXlated.find(r => r.measure != null && r.routeId?.includes(routeNumDigits) && !r.routeId?.endsWith('_S'))
+                    ?? arXlated.find(r => r.measure != null && r.routeId?.includes(routeNumDigits))
+                    ?? arXlated.find(r => r.measure != null);
+      const arMeasure = arResult?.measure ?? null;
+      if (arMeasure == null || arMeasure < segArMin || arMeasure > segArMax) return;
+
+      const odXlated = (odData.locations ?? [])[idx]?.translatedLocations ?? [];
+      const odResult = odXlated.find(r => r.measure != null && r.routeId?.includes(routeNumDigits))
+                    ?? odXlated.find(r => r.measure != null);
+      const odMeasure = odResult?.measure != null ? String(odResult.measure) : '';
+
+      // Extract PM metadata from RouteId: county(0-2), pmPrefix(7), pmSuffix(8)
+      const rid      = a.RouteId;
+      const pmPrefix = rid.length > 7 ? rid[7] : '.';
+      const pmSuffix = rid.length > 8 ? rid[8] : '.';
+
+      points.push({
+        routeId:   rid,
+        arRouteId: arResult?.routeId ?? rid,
+        arMeasure,
+        odMeasure,
+        pmMeasure: a.Measure,
+        pmPrefix:  pmPrefix !== '.' ? pmPrefix : '',
+        pmSuffix:  pmSuffix !== '.' ? pmSuffix : '.',
+        county:    rid.slice(0, 3)
       });
-      if (second) {
+    });
+
+    if (!points.length) return [];
+
+    // Sort by AR, then find pairs within 0.001 AR; lower PM = eq1, higher PM = eq2
+    points.sort((a, b) => a.arMeasure - b.arMeasure);
+    const pairs = [];
+    const used  = new Set();
+
+    for (let i = 0; i < points.length; i++) {
+      if (used.has(i)) continue;
+      for (let j = i + 1; j < points.length; j++) {
+        if (used.has(j)) continue;
+        if (Math.abs(points[j].arMeasure - points[i].arMeasure) > 0.001) break;
+        // Skip pairs with similar PM — duplicate records or overlapping route variants at the same location.
+        // Real equation points always have a substantial PM gap (typically multiple miles).
+        if (Math.abs(points[j].pmMeasure - points[i].pmMeasure) < 0.5) continue;
+        // Determine eq1/eq2 by pmPrefix priority: L (legacy) first, then R (realigned), then standard.
+        // This reflects the California convention: the more established/legacy PM is listed as the
+        // source ("EQUATES TO"), and the newer or realigned PM carries the 'E' suffix.
+        // For same-prefix pairs, the lower PM is eq1.
+        const prefixRank = p => p.pmPrefix === 'L' ? 0 : p.pmPrefix === 'R' ? 1 : 2;
+        const rankI = prefixRank(points[i]), rankJ = prefixRank(points[j]);
+        const [p1, p2] = rankI !== rankJ
+          ? (rankI < rankJ ? [points[i], points[j]] : [points[j], points[i]])
+          : (points[i].pmMeasure <= points[j].pmMeasure ? [points[i], points[j]] : [points[j], points[i]]);
+        used.add(i);
+        used.add(j);
+
+        const key = `eqnet_${routeNumDigits}_${Math.round(p1.arMeasure * 1000)}`;
         pairs.push({
           type:        'equation',
           eqPairId:    key,
-          name:        `eq2_${second.routeId}_${second.fromMeasure}`,
+          name:        `eq1_net_${p1.routeId}_${p1.pmMeasure}`,
+          desc:        'PM EQUATION',
+          routeId:     p1.arRouteId,
+          arMeasure:   p1.arMeasure,
+          county:      p1.county,
+          pmPrefix:    p1.pmPrefix,
+          pmSuffix:    p1.pmSuffix,
+          pmMeasure:   String(p1.pmMeasure),
+          odMeasure:   p1.odMeasure,
+          district:    '',
+          isSecondEq:  false
+        });
+        pairs.push({
+          type:        'equation',
+          eqPairId:    key,
+          name:        `eq2_net_${p2.routeId}_${p2.pmMeasure}`,
           desc:        '',
-          routeId:     second.routeId,
-          arMeasure:   second.fromMeasure,
-          county:      second.County      ?? '',
-          pmPrefix:    second.PMPrefix    ?? '',
+          routeId:     p2.arRouteId,
+          arMeasure:   p2.arMeasure,
+          county:      p2.county,
+          pmPrefix:    p2.pmPrefix,
           pmSuffix:    'E',
-          pmMeasure:   second.PMMeasure   ?? '',
-          odMeasure:   second.ODMeasure   != null ? String(second.ODMeasure) : '',
-          district:    second.District_Code != null ? String(second.District_Code).padStart(2, '0') : '',
+          pmMeasure:   String(p2.pmMeasure),
+          odMeasure:   p2.odMeasure,
+          district:    '',
           isSecondEq:  true
         });
+        break; // each point pairs with at most one other
       }
     }
+
     return pairs;
   }
 
@@ -1658,7 +1736,7 @@
         queryLandmarks(segments, routeSuffix, district, county),
         queryRouteBreaks(segments, routeSuffix, district, county),
         queryIntersections(segments, routeNum, district, county),
-        queryEquationPoints(segments, district, county),
+        queryEquationPointsFromNetwork(segments, paddedRoute, district, county),
         queryCityBegins(segments, paddedRoute, district, county),
         queryIndependentAlignmentBoundaries(segments, paddedRoute, county),
         queryRouteDirection(routeNum)
@@ -1771,7 +1849,7 @@
         queryLandmarks(segments, from.routeSuffix),
         queryRouteBreaks(segments, from.routeSuffix),
         queryIntersections(segments, from.routeNum),
-        queryEquationPoints(segments),
+        queryEquationPointsFromNetwork(segments, paddedRouteNum),
         queryCityBegins(segments, paddedRouteNum),
         queryIndependentAlignmentBoundaries(segments, paddedRouteNum, from.county),
         queryRouteDirection(paddedRouteNum)
@@ -2372,7 +2450,7 @@
         queryLandmarks(segments, routeSuffix),
         queryRouteBreaks(segments, routeSuffix),
         queryIntersections(segments, routeNum),
-        queryEquationPoints(segments),
+        queryEquationPointsFromNetwork(segments, routeNum),
         queryCityBegins(segments, routeNum)
       ]);
 
