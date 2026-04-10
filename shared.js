@@ -133,6 +133,20 @@ async function loadCountyCodeDomain() {
   }
 
   /**
+   * Returns true when a County_Code value stored in layer 85 matches a normalized
+   * county code from normalizeCountyCode().  Layer 85 omits the trailing period that
+   * normalizeCountyCode() appends for 2-char codes (e.g. 'SJ' stored vs 'SJ.' normalized),
+   * so we accept both with and without the trailing period.
+   */
+  function countyCodeMatches(storedCode, normalizedCode) {
+    if (!storedCode || !normalizedCode) return false;
+    const s = storedCode.trim();
+    return s === normalizedCode ||
+      (normalizedCode.endsWith('.') && s === normalizedCode.slice(0, -1)) ||
+      (!normalizedCode.endsWith('.') && s === normalizedCode + '.');
+  }
+
+  /**
    * Splits an array into chunks of at most `size` elements.
    * Used to stay within the feature service's max-record-count per request.
    */
@@ -575,16 +589,16 @@ async function loadCountyCodeDomain() {
       return true;
     });
 
-    // Build a map: Route Break OD → its paired Route Resume, for tiebreak use.
-    // Pair each Route Break with the nearest Route Resume at a higher OD.
+    // Build a map: Route Break AR → its paired Route Resume, for tiebreak use.
+    // Pair each Route Break with the nearest Route Resume at a higher AR.
     const rbBreaks  = main.filter(p => p.type === 'routebreak' && p.desc === 'Route Break');
     const rbResumes = main.filter(p => p.type === 'routebreak' && p.desc === 'Route Resume');
     const rbResumeForBreak = new Map(); // break.name → resume pair
     for (const brk of rbBreaks) {
-      const brkOd = parseFloat(brk.odMeasure);
+      const brkAr = brk.arMeasure ?? Infinity;
       const paired = rbResumes
-        .filter(r => parseFloat(r.odMeasure) >= brkOd)
-        .sort((x, y) => parseFloat(x.odMeasure) - parseFloat(y.odMeasure))[0];
+        .filter(r => (r.arMeasure ?? Infinity) >= brkAr)
+        .sort((x, y) => (x.arMeasure ?? Infinity) - (y.arMeasure ?? Infinity))[0];
       if (paired) rbResumeForBreak.set(brk.name, paired);
     }
     // Build reverse map: resume.name → its Route Break
@@ -594,15 +608,15 @@ async function loadCountyCodeDomain() {
     }
 
     main.sort((a, b) => {
-      const aOd = parseFloat(a.odMeasure);
-      const bOd = parseFloat(b.odMeasure);
-      // Treat missing OD as Infinity so NaN records don't break comparator
+      const aAr = a.arMeasure;
+      const bAr = b.arMeasure;
+      // Treat missing AR as Infinity so null/NaN records don't break comparator
       // consistency (which corrupts TimSort for all nearby records).
-      // Round to 3 decimal places before comparing so that two OD values that
+      // Round to 3 decimal places before comparing so that two AR values that
       // agree to 3dp (e.g. 239.2454 vs 239.2466) are treated as co-located and
-      // fall through to the tiebreak rules below rather than sorting by raw OD.
-      const aVal = isNaN(aOd) ? Infinity : Math.round(aOd * 1000) / 1000;
-      const bVal = isNaN(bOd) ? Infinity : Math.round(bOd * 1000) / 1000;
+      // fall through to the tiebreak rules below rather than sorting by raw AR.
+      const aVal = (aAr == null || isNaN(aAr)) ? Infinity : Math.round(aAr * 1000) / 1000;
+      const bVal = (bAr == null || isNaN(bAr)) ? Infinity : Math.round(bAr * 1000) / 1000;
       const diff = aVal - bVal;
       if (diff !== 0) return diff;
       // Two route break records at the same OD: Route Break before Route Resume.
@@ -615,15 +629,21 @@ async function loadCountyCodeDomain() {
       if (a.pmSuffix === 'E' && b.pmSuffix !== 'E' && a.type !== 'equation') return 1;
       if (a.pmSuffix !== 'E' && b.pmSuffix === 'E' && b.type !== 'equation') return -1;
       // Same PM combination: H (landmarks/equations/etc.) before I (intersections) before R (ramps).
-      if (`${a.pmPrefix}|${a.pmMeasure}|${a.pmSuffix}` === `${b.pmPrefix}|${b.pmMeasure}|${b.pmSuffix}`) {
+      // Within H type, H-valued HG records before non-H (R, L, D, etc.).
+      // Use parseFloat+toFixed(3) for pmMeasure so "020.558" and "20.558" compare equal.
+      const pmKey = p => `${p.pmPrefix}|${isNaN(parseFloat(p.pmMeasure)) ? p.pmMeasure : parseFloat(p.pmMeasure).toFixed(3)}|${p.pmSuffix}`;
+      if (pmKey(a) === pmKey(b)) {
         const ftOf = p => {
           if (p.type === 'equation' || p.type === 'landmark' || p.type === 'routebreak' ||
               p.type === 'citybegin' || p.type === 'cityend') return 0; // H
           if (p.type === 'intersection') return 1;                       // I
           return 2;                                                       // R (ramp)
         };
-        const diff = ftOf(a) - ftOf(b);
-        if (diff !== 0) return diff;
+        const ftDiff = ftOf(a) - ftOf(b);
+        if (ftDiff !== 0) return ftDiff;
+        const hgRank = p => (!p.hgValue || p.hgValue === 'H') ? 0 : 1;
+        const hgDiff = hgRank(a) - hgRank(b);
+        if (hgDiff !== 0) return hgDiff;
       }
       // Route break tiebreak: when a non-routebreak record shares OD with a Route Break or
       // Route Resume, place it before the pair if PM matches Route Break, after if PM matches Resume.
@@ -682,10 +702,14 @@ async function loadCountyCodeDomain() {
       if (!isNaN(aPm) && !isNaN(bPm) && aPm !== bPm) return aPm - bPm;
       return 0;
     });
+    const isIABoundaryRec = p => p.type === 'landmark' && (
+      p.desc === 'BEGIN LEFT INDEPENDENT ALIGNMENT'  || p.desc === 'END LEFT INDEPENDENT ALIGNMENT' ||
+      p.desc === 'BEGIN RIGHT INDEPENDENT ALIGNMENT' || p.desc === 'END RIGHT INDEPENDENT ALIGNMENT'
+    );
     const grouped = [];
     let i = 0;
     while (i < main.length) {
-      if (main[i].pmSuffix === 'R' || main[i].pmSuffix === 'L') {
+      if ((main[i].pmSuffix === 'R' || main[i].pmSuffix === 'L') && !isIABoundaryRec(main[i])) {
         const j = i;
         // Continue through R, L, E, and any dot-record whose hgValue is 'R'
         // or 'L'. pmPrefix is unreliable — some END INDEP ALIGN landmarks
@@ -696,7 +720,19 @@ async function loadCountyCodeDomain() {
             i++;
           } else if (cur.pmSuffix === 'E') {
             i++;
-            break; // E terminates the independent alignment section
+            // Only continue the section past this equation point if R/L records
+            // follow before the next E. Stopping at the next E prevents a chain
+            // of equation points from extending the section across the whole route.
+            let hasMoreRL = false;
+            for (let k = i; k < main.length; k++) {
+              const la = main[k];
+              if (la.pmSuffix === 'E') break;
+              if (la.pmSuffix === 'R' || la.pmSuffix === 'L' || la.hgValue === 'R' || la.hgValue === 'L') {
+                hasMoreRL = true;
+                break;
+              }
+            }
+            if (!hasMoreRL) break;
           } else {
             // Dot-suffix, non-hgValue record — look ahead for more R/L records
             // before the next E. If found, this record falls between the R and L
@@ -704,7 +740,7 @@ async function loadCountyCodeDomain() {
             let hasMoreRL = false;
             for (let k = i + 1; k < main.length; k++) {
               const la = main[k];
-              if (la.pmSuffix === 'E') break; // reached section end — no more R/L
+              if (la.pmSuffix === 'E') break; // E marks end of current alignment span
               if (la.pmSuffix === 'R' || la.pmSuffix === 'L' || la.hgValue === 'R' || la.hgValue === 'L') {
                 hasMoreRL = true;
                 break;
@@ -717,17 +753,18 @@ async function loadCountyCodeDomain() {
         // R group: only R-suffix records confirmed on the R alignment by hgValue.
         // R-suffix records with empty hgValue are not confirmed as R-alignment and
         // go to the trailing bucket after the L group.
-        grouped.push(...section.filter(p => p.pmSuffix === 'R' && p.hgValue === 'R'));
+        grouped.push(...section.filter(p => p.pmSuffix === 'R' && (p.hgValue === 'R' || p.alignment === 'R')));
         // L group: all L-suffix records
         grouped.push(...section.filter(p => p.pmSuffix === 'L'));
         // E-suffix end markers
         grouped.push(...section.filter(p => p.pmSuffix === 'E'));
         // Trailing: dot-suffix records (END INDEP ALIGN landmarks via hgValue),
-        // then R-suffix records not confirmed by hgValue
+        // then R-suffix records not confirmed by hgValue or alignment
         grouped.push(...section.filter(p => p.pmSuffix !== 'R' && p.pmSuffix !== 'L' && p.pmSuffix !== 'E'));
-        grouped.push(...section.filter(p => p.pmSuffix === 'R' && p.hgValue !== 'R'));
+        grouped.push(...section.filter(p => p.pmSuffix === 'R' && p.hgValue !== 'R' && p.alignment !== 'R'));
       } else {
-        grouped.push(main[i++]);
+        const p = main[i++];
+        grouped.push(p);
       }
     }
 

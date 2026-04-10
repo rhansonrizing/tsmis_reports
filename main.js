@@ -7,6 +7,7 @@
     document.getElementById('reportSelect').addEventListener('change', function () {
       // Enable mode buttons now that a report is selected
       document.querySelectorAll('.mode-btn').forEach(b => { b.disabled = false; b.classList.remove('active'); });
+      document.getElementById('paginatedCheck').disabled = false;
       document.getElementById('appForm').style.display      = 'none';
       document.getElementById('controlsGrid').style.display = 'none';
       resetModeSelections();

@@ -345,7 +345,7 @@
 
     .hsl-ramp-col-template {
       display: grid;
-      grid-template-columns: minmax(0,0.55fr) minmax(0,0.7fr) minmax(0,0.3fr) 8ch minmax(0,0.4fr) minmax(0,0.175fr) minmax(0,0.3fr) minmax(0,1.1fr) minmax(0,4fr) 8ch;
+      grid-template-columns: minmax(0,0.55fr) minmax(0,0.7fr) minmax(0,0.3fr) 8ch minmax(0,0.4fr) minmax(0,0.175fr) minmax(0,0.3fr) minmax(0,1.1fr) minmax(0,4fr) 8ch 8ch;
       gap: 0.5rem;
       align-items: center;
     }
@@ -519,7 +519,7 @@
     .mode-selector-box {
       border: 1px solid #d1d5db;
       border-radius: 0;
-      padding: 0.5rem 1.25rem 0.75rem;
+      padding: 0.6rem 1.25rem 0.75rem;
       margin: 0;
       box-shadow: 0 2px 8px rgba(0,0,0,0.07);
     }
@@ -545,12 +545,25 @@
     .mode-btn:hover:not(:disabled) { background: #165ac2; }
     .mode-btn:disabled { background: #a3bee7; cursor: not-allowed; }
     .mode-btn.active { background: #003484; }
+    .mode-selector-header {
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0 0.1rem;
+    }
+    .mode-selector-line {
+      flex: 1;
+      height: 0;
+      border-top: 1px solid #d1d5db;
+      margin: 0 0.25rem;
+    }
     .mode-selector-label {
       font-size: 0.8rem;
       font-weight: 500;
       color: #6b7280;
       white-space: nowrap;
-      padding: 0 0.4rem;
+      padding: 0 0.3rem;
     }
     .mode-paginated-label {
       display: flex;
@@ -560,7 +573,11 @@
       font-weight: 600;
       color: #374151;
       cursor: pointer;
-      margin-top: 0.5rem;
+      padding: 0 0.3rem;
+    }
+    .mode-paginated-label:has(input:disabled) {
+      color: #a3bee7;
+      cursor: not-allowed;
     }
     .route-form-row {
       display: flex;
@@ -966,6 +983,8 @@
     .hsl-item-eq   > span { color: #c00; }
     .hsl-item-rb   > span { color: #166534; }
     .hsl-item-cb   > span { color: #166534; }
+    .hsl-item-rb > span:nth-child(6), .hsl-item-rb > span:nth-child(7),
+    .hsl-item-cb > span:nth-child(6), .hsl-item-cb > span:nth-child(7) { font-weight: bold; }
     .hsl-item-ia-r > span { }
     .hsl-item-ia-l > span { }
 

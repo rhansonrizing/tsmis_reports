@@ -113,11 +113,11 @@
                    : isPlainS      ? p.routeId.slice(0, -1) + 'P'
                    : p.routeId;
         const ridS = isS ? p.routeId : null;
-        // Layer 116 (Highway Group) stores ranges in AR coordinates — always use
-        // arMeasure so the lookup isn't thrown off by OD/AR divergence near
-        // realignments or junctions.  All other layers (74, 85, etc.) use OD so
-        // the lookup reflects reference-date network position.
-        const m = (layerNum === 116)
+        // Layers 116 (Highway Group) and 74 (City Code) store ranges in AR
+        // coordinates — always use arMeasure so the lookup isn't thrown off by
+        // OD/AR divergence near realignments or junctions (e.g. R-prefix records
+        // whose OD translate lands miles away on the main route).
+        const m = (layerNum === 116 || layerNum === 74)
           ? p.arMeasure
           : ((p.odMeasure !== '' && p.odMeasure != null) ? parseFloat(p.odMeasure) : p.arMeasure);
         clauseSet.add(`(RouteID = '${rid}' AND ${fromField} <= ${m} AND ${toField} >= ${m})`);
@@ -168,7 +168,7 @@
                       : isPlainS      ? p.routeId.slice(0, -1) + 'P'
                       : p.routeId;
       const lookupIdS = isS ? p.routeId : null;
-      const m = (layerNum === 116)
+      const m = (layerNum === 116 || layerNum === 74)
         ? p.arMeasure
         : ((p.odMeasure !== '' && p.odMeasure != null) ? parseFloat(p.odMeasure) : p.arMeasure);
       const candidatesP = byRoute.get(lookupId)  ?? [];

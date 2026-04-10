@@ -51,15 +51,18 @@
   <div id="modeSelector" style="display:none;">
     <div class="mode-selector">
       <fieldset class="mode-selector-box">
-        <legend class="mode-selector-label">Query Method</legend>
+        <legend class="mode-selector-header">
+          <span class="mode-selector-label">Query Method</span>
+          <span class="mode-selector-line"></span>
+          <label class="mode-paginated-label">
+            <input type="checkbox" id="paginatedCheck" disabled>
+            PAGINATED
+          </label>
+        </legend>
         <div class="mode-selector-btns">
           <button class="mode-btn" id="modeBtnDistrictRoute" onclick="selectMode('districtRoute')" disabled>District / County / Route</button>
           <button class="mode-btn" id="modeBtnRouteMeasure" onclick="selectMode('routeMeasure')" disabled>Postmile Locations</button>
         </div>
-        <label class="mode-paginated-label">
-          <input type="checkbox" id="paginatedCheck" checked>
-          PAGINATED
-        </label>
       </fieldset>
     </div>
   </div>
