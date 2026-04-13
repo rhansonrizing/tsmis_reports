@@ -253,7 +253,7 @@ Equation points are detected on the fly from calibration point data (layer 1):
 
 3. **Filter** translated points to the segment AR range, then sort by AR.
 
-4. **Pair** adjacent points within 0.001 AR of each other. Within each pair, the lower PM value is eq1 and the higher is eq2 (the "EQUATES TO" side). Each point is used in at most one pair.
+4. **Pair** adjacent points within 0.005 AR of each other. Since the array is sorted by AR, `points[i]` (lower AR) is always eq1 and `points[j]` (higher AR) is always eq2. Each point is used in at most one pair.
 
 5. **Build pair objects** in the same `eq1`/`eq2` structure as all other equation points — `isSecondEq: false` on eq1 (desc: `'PM EQUATION'`), `isSecondEq: true` and `pmSuffix: 'E'` on eq2 — so all existing sort tiebreak and render logic works unchanged.
 

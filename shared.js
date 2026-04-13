@@ -628,6 +628,11 @@ async function loadCountyCodeDomain() {
       // as a marker but must fall through to the equation tiebreak below.
       if (a.pmSuffix === 'E' && b.pmSuffix !== 'E' && a.type !== 'equation') return 1;
       if (a.pmSuffix !== 'E' && b.pmSuffix === 'E' && b.type !== 'equation') return -1;
+      // Equation points sort before all other record types at the same AR position.
+      if (a.type === 'equation' && b.type !== 'equation') return -1;
+      if (a.type !== 'equation' && b.type === 'equation') return 1;
+      // Two equation points at the same 3dp AR: use full precision to differentiate.
+      if (a.type === 'equation' && b.type === 'equation') return (aAr ?? Infinity) - (bAr ?? Infinity);
       // Same PM combination: H (landmarks/equations/etc.) before I (intersections) before R (ramps).
       // Within H type, H-valued HG records before non-H (R, L, D, etc.).
       // Use parseFloat+toFixed(3) for pmMeasure so "020.558" and "20.558" compare equal.
@@ -727,6 +732,11 @@ async function loadCountyCodeDomain() {
           if (cur.pmSuffix === 'R' || cur.pmSuffix === 'L' || cur.hgValue === 'R' || cur.hgValue === 'L') {
             i++;
           } else if (cur.pmSuffix === 'E') {
+            // Equation records use pmSuffix='E' as a rendering marker, not as an
+            // alignment boundary. Pulling them into a section reorders them out of
+            // AR sequence (E-group lands before trailing dot records). Break so eq2
+            // passes through the outer loop at its natural AR position.
+            if (cur.type === 'equation') break;
             i++;
             // Only continue the section past this equation point if R/L records
             // follow before the next E. Stopping at the next E prevents a chain
@@ -786,6 +796,55 @@ async function loadCountyCodeDomain() {
       result.push(p);
     }
     return result;
+  }
+
+  // When two equation-pair records share the same AR to 3dp, the lower-AR tie-
+  // break used during sorting may not put them in the right order relative to
+  // the surrounding records. This pass checks the pmPrefix of the record
+  // immediately before and after each same-AR pair and swaps the PM data fields
+  // if doing so produces a better prefix match (eq1 continues from the prefix
+  // context before it; eq2 leads into the prefix context after it).
+  function fixEqPairOrder(pairs) {
+    for (let i = 0; i < pairs.length - 1; i++) {
+      const eq1 = pairs[i];
+      const eq2  = pairs[i + 1];
+      if (eq1.type !== 'equation' || eq1.isSecondEq)  continue;
+      if (eq2.type !== 'equation' || !eq2.isSecondEq) continue;
+      if (eq1.eqPairId !== eq2.eqPairId)              continue;
+
+      // Only act when both endpoints share the same AR to 3dp.
+      const ar1 = Math.round((eq1.arMeasure ?? 0) * 1000);
+      const ar2  = Math.round((eq2.arMeasure ?? 0) * 1000);
+      if (ar1 !== ar2) continue;
+
+      const eq1Pfx = eq1.pmPrefix ?? '';
+      const eq2Pfx  = eq2.pmPrefix ?? '';
+      if (eq1Pfx === eq2Pfx) continue; // prefixes identical — no information to use
+
+      const prevPfx = i > 0                 ? (pairs[i - 1].pmPrefix ?? '') : null;
+      const nextPfx  = i + 2 < pairs.length ? (pairs[i + 2].pmPrefix ?? '') : null;
+
+      // Primary signal: the record before the pair should share its prefix with eq1
+      // (the departure side of the old PM system). If eq2's prefix matches the
+      // preceding context and eq1's does not, the pair is reversed — swap it.
+      // Secondary signal (when no prev record): eq2 should match the following
+      // context. If eq1 matches next but eq2 does not, swap.
+      let shouldSwap = false;
+      if (prevPfx !== null) {
+        if (eq2Pfx === prevPfx && eq1Pfx !== prevPfx) shouldSwap = true;
+      } else if (nextPfx !== null) {
+        if (eq1Pfx === nextPfx && eq2Pfx !== nextPfx) shouldSwap = true;
+      }
+      if (!shouldSwap) continue;
+
+      // Swap PM-related data fields only — structural fields (desc, isSecondEq,
+      // eqPairId, type) stay in place so rendering labels are unaffected.
+      for (const f of ['pmPrefix', 'pmSuffix', 'pmMeasure', 'routeId', 'arMeasure', 'odMeasure', 'county', 'name']) {
+        const tmp = eq1[f]; eq1[f] = eq2[f]; eq2[f] = tmp;
+      }
+      console.log(`[eqOrder] swapped eqPairId=${eq1.eqPairId}: eq1 now (${eq1.pmPrefix||'.'}${eq1.pmMeasure}) eq2 now (${eq2.pmPrefix||'.'}${eq2.pmMeasure}) — prev=${prevPfx} next=${nextPfx}`);
+    }
+    return pairs;
   }
 
   function pickBest(locs) {
