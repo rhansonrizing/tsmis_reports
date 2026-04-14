@@ -607,6 +607,41 @@ async function loadCountyCodeDomain() {
       rbBreakForResume.set(resume.name, main.find(p => p.name === brkName));
     }
 
+    // ── Alignment-start AR fixup ─────────────────────────────────────────────
+    // Equation points marking the START of an R/L alignment (non-empty pmPrefix,
+    // pmMeasure ≈ 0) get their arMeasure from the PM-network calibration
+    // translation. That value can differ slightly from the AllRoads AR of the
+    // first alignment records sharing the same pmPrefix — either slightly below
+    // (original case) or slightly above (e.g. an sfx:L landmark that translates
+    // lower than eq2's calibration AR). In either case, the outer grouping loop
+    // can reach an R/L record before eq2 in main[], start a section prematurely,
+    // and leave that record in the wrong alignment group or above the eq pair.
+    //
+    // Fix: clamp eq2.arMeasure down to just below the minimum AR of non-boundary
+    // records sharing its pmPrefix (Math.min handles both over- and under-shoot).
+    // The equation-type tiebreak then guarantees eq2 sorts first within the shared
+    // 3dp bucket, so the outer loop pushes eq2 (via the else branch) before any
+    // alignment record triggers a new section.
+    for (const p of main) {
+      if (p.type !== 'equation' || !p.isSecondEq) continue;
+      const pfx = p.pmPrefix;
+      if (!pfx || pfx === '') continue;                  // only non-empty prefixes
+      if (parseFloat(p.pmMeasure) >= 0.01) continue;    // only pm ≈ 0 (alignment start)
+      let minPfxAr = Infinity;
+      for (const r of main) {
+        if (r === p || r.pmPrefix !== pfx) continue;
+        if (r.arMeasure == null || isNaN(r.arMeasure)) continue;
+        if (r.type === 'landmark' && (               // skip IA boundary landmarks
+          r.desc === 'BEGIN LEFT INDEPENDENT ALIGNMENT'  || r.desc === 'END LEFT INDEPENDENT ALIGNMENT'  ||
+          r.desc === 'BEGIN RIGHT INDEPENDENT ALIGNMENT' || r.desc === 'END RIGHT INDEPENDENT ALIGNMENT'
+        )) continue;
+        minPfxAr = Math.min(minPfxAr, r.arMeasure);
+      }
+      if (minPfxAr < Infinity) {
+        p.arMeasure = Math.min(p.arMeasure, minPfxAr - 0.0005);
+      }
+    }
+
     main.sort((a, b) => {
       const aAr = a.arMeasure;
       const bAr = b.arMeasure;
@@ -618,7 +653,21 @@ async function loadCountyCodeDomain() {
       const aVal = (aAr == null || isNaN(aAr)) ? Infinity : Math.round(aAr * 1000) / 1000;
       const bVal = (bAr == null || isNaN(bAr)) ? Infinity : Math.round(bAr * 1000) / 1000;
       const diff = aVal - bVal;
-      if (diff !== 0) return diff;
+      // City boundary records sort before intersections/ramps at the same PM even
+      // when their stored AR values differ slightly: layer 74's FromARMeasure /
+      // ToARMeasure may not exactly equal the AR produced by translating the
+      // intersection's PM position, so the diff===0 pmKey tiebreak below never fires.
+      // Only applies when the PM key matches; otherwise fall through to normal AR sort.
+      if (diff !== 0) {
+        const isCityBoundary = t => t === 'citybegin' || t === 'cityend';
+        const isIorR         = t => t === 'intersection' || t === 'ramp';
+        if ((isCityBoundary(a.type) && isIorR(b.type)) || (isCityBoundary(b.type) && isIorR(a.type))) {
+          const normKey = p => `${p.pmPrefix === '.' ? '' : (p.pmPrefix ?? '')}|${isNaN(parseFloat(p.pmMeasure)) ? p.pmMeasure : parseFloat(p.pmMeasure).toFixed(3)}|${p.pmSuffix}`;
+          const nkA = normKey(a), nkB = normKey(b);
+          if (nkA === nkB) return isCityBoundary(a.type) ? -1 : 1;
+        }
+        return diff;
+      }
       // Two route break records at the same OD: Route Break before Route Resume.
       if (a.type === 'routebreak' && b.type === 'routebreak') {
         if (a.desc === 'Route Break' && b.desc !== 'Route Break') return -1;
@@ -636,7 +685,10 @@ async function loadCountyCodeDomain() {
       // Same PM combination: H (landmarks/equations/etc.) before I (intersections) before R (ramps).
       // Within H type, H-valued HG records before non-H (R, L, D, etc.).
       // Use parseFloat+toFixed(3) for pmMeasure so "020.558" and "20.558" compare equal.
-      const pmKey = p => `${p.pmPrefix}|${isNaN(parseFloat(p.pmMeasure)) ? p.pmMeasure : parseFloat(p.pmMeasure).toFixed(3)}|${p.pmSuffix}`;
+      // Normalize pmPrefix: '.' and '' are both "no prefix" — city begin/end records get '.'
+      // from the LRServer PM route ID while intersection records get '' from a null PMPrefix field.
+      const normPfx = p => (p.pmPrefix === '.' ? '' : (p.pmPrefix ?? ''));
+      const pmKey = p => `${normPfx(p)}|${isNaN(parseFloat(p.pmMeasure)) ? p.pmMeasure : parseFloat(p.pmMeasure).toFixed(3)}|${p.pmSuffix}`;
       if (pmKey(a) === pmKey(b)) {
         const ftOf = p => {
           if (p.type === 'equation' || p.type === 'landmark' || p.type === 'routebreak' ||
@@ -729,7 +781,11 @@ async function loadCountyCodeDomain() {
         // carry pmPrefix='.' rather than 'R', so we use hgValue exclusively.
         while (i < main.length) {
           const cur = main[i];
-          if (cur.pmSuffix === 'R' || cur.pmSuffix === 'L' || cur.hgValue === 'R' || cur.hgValue === 'L') {
+          // Equation records must not be classified by hgValue — their highway group
+          // reflects the alignment at their calibration-derived AR, not their actual
+          // sort position, and consuming them via hgValue bypasses the sfx:E break
+          // below, reordering the eq pair to land after the section's L group.
+          if (cur.type !== 'equation' && (cur.pmSuffix === 'R' || cur.pmSuffix === 'L' || cur.hgValue === 'R' || cur.hgValue === 'L')) {
             i++;
           } else if (cur.pmSuffix === 'E') {
             // Equation records use pmSuffix='E' as a rendering marker, not as an
@@ -774,8 +830,9 @@ async function loadCountyCodeDomain() {
         grouped.push(...section.filter(p => p.pmSuffix === 'R' && (p.hgValue === 'R' || p.alignment === 'R')));
         // L group: all L-suffix records
         grouped.push(...section.filter(p => p.pmSuffix === 'L'));
-        // E-suffix end markers
-        grouped.push(...section.filter(p => p.pmSuffix === 'E'));
+        // E-suffix end markers (never equation records — eq2 uses sfx:E as a
+        // rendering marker and must not be grouped into the alignment section)
+        grouped.push(...section.filter(p => p.pmSuffix === 'E' && p.type !== 'equation'));
         // Trailing: dot-suffix records (END INDEP ALIGN landmarks via hgValue),
         // then R-suffix records not confirmed by hgValue or alignment
         grouped.push(...section.filter(p => p.pmSuffix !== 'R' && p.pmSuffix !== 'L' && p.pmSuffix !== 'E'));
@@ -817,17 +874,36 @@ async function loadCountyCodeDomain() {
       const ar2  = Math.round((eq2.arMeasure ?? 0) * 1000);
       if (ar1 !== ar2) continue;
 
-      const eq1Pfx = eq1.pmPrefix ?? '';
-      const eq2Pfx  = eq2.pmPrefix ?? '';
+      // Normalize prefix: treat '.' and '' as equivalent (no prefix).
+      // Equation records store dot-prefix as '' but landmark/other records store '.'.
+      const normPfx = p => (p === '.' || p == null || p === '') ? '' : p;
+      const eq1Pfx = normPfx(eq1.pmPrefix);
+      const eq2Pfx  = normPfx(eq2.pmPrefix);
       if (eq1Pfx === eq2Pfx) continue; // prefixes identical — no information to use
 
-      const prevPfx = i > 0                 ? (pairs[i - 1].pmPrefix ?? '') : null;
-      const nextPfx  = i + 2 < pairs.length ? (pairs[i + 2].pmPrefix ?? '') : null;
+      // Scan for context using H-type records only (landmarks, route breaks, city
+      // boundaries). Ramps and intersections can have pmPrefix values that belong
+      // to the *arriving* PM system and would give the wrong signal if used as
+      // pairs[i-1]/pairs[i+2] directly.
+      const isHCtx = p => p.type === 'landmark' || p.type === 'routebreak' ||
+                          p.type === 'citybegin' || p.type === 'cityend';
+      let prevPfx = null;
+      for (let k = i - 1; k >= 0; k--) {
+        if (!isHCtx(pairs[k])) continue;
+        prevPfx = normPfx(pairs[k].pmPrefix);
+        break;
+      }
+      let nextPfx = null;
+      for (let k = i + 2; k < pairs.length; k++) {
+        if (!isHCtx(pairs[k])) continue;
+        nextPfx = normPfx(pairs[k].pmPrefix);
+        break;
+      }
 
-      // Primary signal: the record before the pair should share its prefix with eq1
-      // (the departure side of the old PM system). If eq2's prefix matches the
+      // Primary signal: the nearest preceding H record should share its prefix with
+      // eq1 (the departure side of the old PM system). If eq2's prefix matches the
       // preceding context and eq1's does not, the pair is reversed — swap it.
-      // Secondary signal (when no prev record): eq2 should match the following
+      // Secondary signal (when no prev H record): eq2 should match the following
       // context. If eq1 matches next but eq2 does not, swap.
       let shouldSwap = false;
       if (prevPfx !== null) {
@@ -842,7 +918,6 @@ async function loadCountyCodeDomain() {
       for (const f of ['pmPrefix', 'pmSuffix', 'pmMeasure', 'routeId', 'arMeasure', 'odMeasure', 'county', 'name']) {
         const tmp = eq1[f]; eq1[f] = eq2[f]; eq2[f] = tmp;
       }
-      console.log(`[eqOrder] swapped eqPairId=${eq1.eqPairId}: eq1 now (${eq1.pmPrefix||'.'}${eq1.pmMeasure}) eq2 now (${eq2.pmPrefix||'.'}${eq2.pmMeasure}) — prev=${prevPfx} next=${nextPfx}`);
     }
     return pairs;
   }

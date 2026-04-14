@@ -63,25 +63,18 @@
     });
   }
 
-  // Removes city begin/end records whose PM key (prefix+measure+suffix)
-  // matches any other record already in the report — avoids duplicate rows at boundaries.
   function hsl_filterCityBoundaries(pairs) {
-    // Compute AR extent of non-city records so we can drop city boundary records
-    // that fall entirely outside this report's segment (e.g. layer 74 has no
-    // district field, so out-of-district city records on the same route slip through).
+    const isCityType = t => t === 'citybegin' || t === 'cityend' || t === 'citybreak' || t === 'cityresume';
     const nonCityArs = pairs
-      .filter(p => p.type !== 'citybegin' && p.type !== 'cityend' && p.arMeasure != null && !isNaN(p.arMeasure))
+      .filter(p => !isCityType(p.type) && p.arMeasure != null && !isNaN(p.arMeasure))
       .map(p => p.arMeasure);
     const minAR = nonCityArs.length ? Math.min(...nonCityArs) : -Infinity;
     const maxAR = nonCityArs.length ? Math.max(...nonCityArs) :  Infinity;
 
     return pairs.filter(p => {
-      if (p.type !== 'citybegin' && p.type !== 'cityend') return true;
-      // Drop city records whose AR falls outside the report's non-city AR extent.
+      if (!isCityType(p.type)) return true;
       if (p.arMeasure != null && !isNaN(p.arMeasure) && (p.arMeasure < minAR - 0.005 || p.arMeasure > maxAR + 0.005)) return false;
       if (p.odMeasure !== '' && p.odMeasure != null && parseFloat(p.odMeasure) < 0) return false;
-      // Drop city begin/end records with a negative or negative-zero PM — the city
-      // boundary falls before this route segment starts, not a genuine crossing.
       const pmVal = parseFloat(p.pmMeasure);
       if (!isNaN(pmVal) && (pmVal < 0 || Object.is(pmVal, -0))) return false;
       return true;
@@ -448,7 +441,6 @@
                       ?? arXlated.find(r => r.measure != null);
       const arMeasure  = arResult?.measure ?? null;
       const inRange    = arMeasure != null && arMeasure >= segArMin && arMeasure <= segArMax;
-      console.log(`[iaBdry] ${tp.suffix} ${tp.isBegin ? 'begin' : 'end'} routeId=${tp.routeId} measure=${tp.measure} | arAll=`, arXlated.map(r => `${r.routeId}:${r.measure}`), `| arPicked=${arResult?.routeId}:${arMeasure} inRange=${inRange}`);
       if (!inRange) return;
 
       const odXlated  = (odData.locations ?? [])[idx]?.translatedLocations ?? [];
@@ -592,7 +584,6 @@
       if (diff !== 0) return diff;
       return a.pmMeasure - b.pmMeasure; // tiebreak: lower PM first
     });
-    console.log(`[eqNet] ${routePrefix}: sorted points:`, points.map(p => `${p.routeId}(pfx=${p.pmPrefix||'.'}sfx=${p.pmSuffix}) PM=${p.pmMeasure} AR=${p.arMeasure} OD=${p.odMeasure}`));
     const pairs       = [];
     const usedPmPairs = new Set();
     const odPaired    = new Set(); // point references paired in the OD pass
@@ -620,7 +611,6 @@
         if (!byPm.has(pmKey)) byPm.set(pmKey, pt);
       }
       if (byPm.size !== 2) {
-        if (byPm.size > 2) console.log(`[eqNet] ${routePrefix}: SKIP-multi OD=${odKey} (${byPm.size} distinct PMs: ${[...byPm.keys()].join(', ')})`);
         continue;
       }
 
@@ -630,7 +620,6 @@
       const iIsIndL = p1.pmSuffix === 'L';
       const jIsIndL = p2.pmSuffix === 'L';
       if (iIsIndL !== jIsIndL) {
-        console.log(`[eqNet] ${routePrefix}: SKIP-indL-mismatch OD=${odKey} p1=(${p1.routeId} sfx=${p1.pmSuffix}) p2=(${p2.routeId} sfx=${p2.pmSuffix})`);
         continue;
       }
 
@@ -643,8 +632,6 @@
       // Mark all RouteId variants in the original group as paired so the AR
       // fallback pass doesn't re-pair them.
       for (const pt of group) odPaired.add(pt);
-
-      console.log(`[eqNet] ${routePrefix}: PAIR-FORMING(OD) OD=${odKey} p1=(${p1.routeId} PM=${p1.pmMeasure} AR=${p1.arMeasure}) p2=(${p2.routeId} PM=${p2.pmMeasure} AR=${p2.arMeasure})`);
 
       const eq2pmSuffix = (iIsIndL && jIsIndL) ? p2.pmSuffix : 'E';
       const key = `eqnet_${routeNumDigits}_od${Math.round(parseFloat(odKey) * 1000)}`;
@@ -690,25 +677,20 @@
         if (odPaired.has(points[j]) || used.has(j)) continue;
         const arDiff = Math.abs(points[j].arMeasure - points[i].arMeasure);
         const pmDiff = Math.abs(points[j].pmMeasure - points[i].pmMeasure);
-        console.log(`[eqNet] ${routePrefix}: AR-fallback i=${i}(${points[i].routeId} PM=${points[i].pmMeasure} AR=${points[i].arMeasure}) j=${j}(${points[j].routeId} PM=${points[j].pmMeasure} AR=${points[j].arMeasure}) arDiff=${arDiff} pmDiff=${pmDiff}`);
         if (arDiff > 0.005) break;
         const iIsIndL = points[i].pmSuffix === 'L';
         const jIsIndL = points[j].pmSuffix === 'L';
         if (iIsIndL !== jIsIndL) {
-          console.log(`[eqNet] ${routePrefix}: SKIP-indL-mismatch i=${i}(${points[i].routeId} sfx=${points[i].pmSuffix}) j=${j}(${points[j].routeId} sfx=${points[j].pmSuffix})`);
           continue;
         }
         if (parseFloat(points[i].pmMeasure).toFixed(3) === parseFloat(points[j].pmMeasure).toFixed(3)) {
-          console.log(`[eqNet] ${routePrefix}: SKIP-samePM i=${i}(${points[i].routeId} pfx=${points[i].pmPrefix||'.'} sfx=${points[i].pmSuffix} PM=${points[i].pmMeasure}) j=${j}(${points[j].routeId} pfx=${points[j].pmPrefix||'.'} sfx=${points[j].pmSuffix} PM=${points[j].pmMeasure})`);
           continue;
         }
         const dupThreshold = (iIsIndL && jIsIndL) ? 0.01 : 0.5;
         if (arDiff < 0.0005 && pmDiff < dupThreshold) {
-          console.log(`[eqNet] ${routePrefix}: SKIP-dup i=${i}(${points[i].routeId} pfx=${points[i].pmPrefix||'.'} sfx=${points[i].pmSuffix} PM=${points[i].pmMeasure}) j=${j}(${points[j].routeId} pfx=${points[j].pmPrefix||'.'} sfx=${points[j].pmSuffix} PM=${points[j].pmMeasure}) arDiff=${arDiff} pmDiff=${pmDiff} threshold=${dupThreshold}`);
           continue;
         }
         const [p1, p2] = [points[i], points[j]];
-        console.log(`[eqNet] ${routePrefix}: PAIR-FORMING(AR) i=${i}(${p1.routeId} PM=${p1.pmMeasure}) j=${j}(${p2.routeId} PM=${p2.pmMeasure}) arDiff=${arDiff} pmDiff=${pmDiff}`);
         used.add(i);
         used.add(j);
         for (let k = 0; k < points.length; k++) {
@@ -823,9 +805,10 @@
     const pairs = features.flatMap(f => {
       const a        = f.attributes ?? {};
       const cityCode = a.City_Code ?? '';
-      // Skip city begin when the begin falls on an L independent alignment —
-      // the city was already entered on the main alignment before the split.
+      // Skip city begin/end when they fall on an L independent alignment —
+      // the city boundary was already crossed on the main alignment before the split.
       const beginSuffix = a.BeginPMSuffix ?? '.';
+      const endSuffix   = a.EndPMSuffix   ?? '.';
       const records = [];
       if (beginSuffix !== 'L') records.push({
           type:        'citybegin',
@@ -844,7 +827,7 @@
           startDate:   null,
           endDate:     null
         });
-      records.push({
+      if (endSuffix !== 'L') records.push({
           type:        'cityend',
           name:        `ce_${a.RouteID}_${a.ToARMeasure}`,
           desc:        cityCode ? `CITY END: ${cityCode}` : 'CITY END',
@@ -922,30 +905,47 @@
   }
 
   /**
-   * For cities split into multiple segments on the same route, keep only the
-   * citybegin from the first segment (lowest arMeasure) and the cityend from
-   * the last segment (highest arMeasure). Intermediate endpoints are suppressed.
+   * For cities that appear in multiple non-contiguous segments on the same route:
+   * - Keep the first citybegin (lowest arMeasure) and last cityend (highest arMeasure) as-is.
+   * - Convert intermediate cityend records → type 'citybreak'  (desc: "CITY BREAK: <code>").
+   * - Convert intermediate citybegin records → type 'cityresume' (desc: "CITY RESUME: <code>").
+   * For cities with a single contiguous segment, records pass through unchanged.
    */
   function hsl_deduplicateCitySegments(pairs) {
-    // Group citybegin/cityend records by City_Code; non-city records pass through unchanged.
-    const cityBegins = new Map(); // City_Code → record with min arMeasure
-    const cityEnds   = new Map(); // City_Code → record with max arMeasure
+    // Group citybegin/cityend records by cityCode, sorted by arMeasure.
+    const cityGroups = new Map(); // cityCode → [records sorted by arMeasure]
     for (const p of pairs) {
-      if (p.type === 'citybegin') {
-        const prev = cityBegins.get(p.cityCode);
-        if (!prev || p.arMeasure < prev.arMeasure) cityBegins.set(p.cityCode, p);
-      } else if (p.type === 'cityend') {
-        const prev = cityEnds.get(p.cityCode);
-        if (!prev || p.arMeasure > prev.arMeasure) cityEnds.set(p.cityCode, p);
+      if (p.type === 'citybegin' || p.type === 'cityend') {
+        if (!cityGroups.has(p.cityCode)) cityGroups.set(p.cityCode, []);
+        cityGroups.get(p.cityCode).push(p);
       }
     }
-    const keepNames = new Set([
-      ...[...cityBegins.values()].map(p => p.name),
-      ...[...cityEnds.values()].map(p => p.name),
-    ]);
-    return pairs.filter(p =>
-      (p.type !== 'citybegin' && p.type !== 'cityend') || keepNames.has(p.name)
-    );
+
+    // Build name → new type for records that need to change.
+    const typeOverride = new Map(); // name → new type string
+    for (const [, records] of cityGroups) {
+      if (records.length <= 2) continue; // Single segment — nothing to transform.
+      records.sort((a, b) => a.arMeasure - b.arMeasure);
+      records.forEach((r, i) => {
+        if (i === 0)                    typeOverride.set(r.name, 'citybegin');
+        else if (i === records.length - 1) typeOverride.set(r.name, 'cityend');
+        else if (r.type === 'cityend')  typeOverride.set(r.name, 'citybreak');
+        else                            typeOverride.set(r.name, 'cityresume');
+      });
+    }
+
+    if (typeOverride.size === 0) return pairs;
+
+    return pairs.map(p => {
+      if (p.type !== 'citybegin' && p.type !== 'cityend') return p;
+      const newType = typeOverride.get(p.name);
+      if (!newType || newType === p.type) return p;
+      const cityCode = p.cityCode ?? '';
+      const desc = newType === 'citybreak'  ? (cityCode ? `CITY BREAK: ${cityCode}`  : 'CITY BREAK')
+                 : newType === 'cityresume' ? (cityCode ? `CITY RESUME: ${cityCode}` : 'CITY RESUME')
+                 : p.desc;
+      return { ...p, type: newType, desc };
+    });
   }
 
   // ── HSL: Query intersections (layers 0, 151, g2m, translate) ────────────
@@ -1408,9 +1408,7 @@
         if (!data.error) {
           const features = data.features ?? [];
           const allTo = features.map(f => f.attributes?.ToARMeasure).filter(v => v != null);
-          console.log(`[hsl_queryEndRecord] layer 114 returned ${features.length} feature(s); all ToARMeasures:`, allTo);
           if (allTo.length > 0) endArMeasure = Math.max(...allTo);
-          console.log(`[hsl_queryEndRecord] selected endArMeasure=${endArMeasure}`);
         } else {
           console.error(`[hsl_queryEndRecord] layer 114 error ${data.error.code}: ${data.error.message}`);
         }
@@ -1573,11 +1571,9 @@
     ]);
 
     const odLoc    = (odData.locations ?? [])[0];
-    console.log(`[hsl_queryEndRecord] endArMeasure=${endArMeasure} lookupMeasure=${lookupMeasure}; OD translatedLocations:`, JSON.stringify(odLoc?.translatedLocations ?? []));
     const odResult = (odLoc?.translatedLocations ?? []).find(r => r.measure != null && routeNumDigits && r.routeId?.includes(routeNumDigits))
                   ?? (odLoc?.translatedLocations ?? []).find(r => r.measure != null);
     const odMeasure = odResult?.measure != null ? String(odResult.measure) : '';
-    console.log(`[hsl_queryEndRecord] selected odMeasure=${odMeasure} (from routeId=${odResult?.routeId})`);
 
     const pmLoc    = (pmData.locations ?? [])[0];
     const pmResult = (pmLoc?.translatedLocations ?? []).find(r => r.measure != null && routeNumDigits && r.routeId?.includes(routeNumDigits))
@@ -1858,6 +1854,7 @@
       const hgMap = await queryRangeLayer(unsortedPairs, 116, 'Highway_Group');
       for (const p of unsortedPairs) p.hgValue = hgMap.get(p.name) ?? '';
       const allPairs = fixEqPairOrder(hsl_filterRealignmentLandmarks(hsl_filterCityBoundaries(sortWithIndependentAlignments(unsortedPairs))));
+      hsl_logEqNeighbors(allPairs, 'district/route');
       if (allPairs.length === 0) { hsl_showRampResults('none'); return; }
 
       const lastPair = allPairs[allPairs.length - 1];
@@ -1971,6 +1968,7 @@
       const hgMap = await queryRangeLayer(unsortedPairs, 116, 'Highway_Group');
       for (const p of unsortedPairs) p.hgValue = hgMap.get(p.name) ?? '';
       const allPairs = fixEqPairOrder(hsl_filterRealignmentLandmarks(hsl_filterCityBoundaries(sortWithIndependentAlignments(unsortedPairs))));
+      hsl_logEqNeighbors(allPairs, 'postmile');
       if (allPairs.length === 0) { hsl_showRampResults('none'); return; }
       const lastPair = allPairs[allPairs.length - 1];
       const endPair = (lastPair?.type === 'cityend' || lastPair?.type === 'citybegin') ? null : await hsl_queryEndRecord(segments, null, null, paddedRouteNum);
@@ -2059,7 +2057,7 @@
            p.desc === 'BEGIN RIGHT INDEPENDENT ALIGNMENT' || p.desc === 'END RIGHT INDEPENDENT ALIGNMENT')) {
         hwyGroup = p.alignment ?? '';
       }
-      let cityCode  = (p.type === 'citybegin' || p.type === 'cityend') ? (p.cityCode ?? '') : (cityMap.get(p.name) ?? '');
+      let cityCode  = (p.type === 'citybegin' || p.type === 'cityend' || p.type === 'citybreak' || p.type === 'cityresume') ? (p.cityCode ?? '') : (cityMap.get(p.name) ?? '');
       if (p.type === 'routebreak' && p.desc === 'Route Break' && !hwyGroup) {
         const resume = allPairs.slice(i + 1).find(r => r.type === 'routebreak' && r.desc === 'Route Resume');
         if (resume) {
@@ -2070,7 +2068,7 @@
         name:        p.name,
         type:        p.type,
         arMeasure:   p.arMeasure ?? null,
-        featureType: p.type === 'equation' ? 'H' : p.type === 'landmark' ? 'H' : p.type === 'routebreak' ? 'H' : p.type === 'citybegin' ? 'H' : p.type === 'cityend' ? 'H' : p.type === 'intersection' ? 'I' : 'R',
+        featureType: p.type === 'equation' ? 'H' : p.type === 'landmark' ? 'H' : p.type === 'routebreak' ? 'H' : p.type === 'citybegin' ? 'H' : p.type === 'cityend' ? 'H' : p.type === 'citybreak' ? 'H' : p.type === 'cityresume' ? 'H' : p.type === 'intersection' ? 'I' : 'R',
         isCross:             p.isCross ?? false,
         crossRouteFormatted: p.crossRouteFormatted ?? false,
         hasCrossRoute:       (p.crossRouteFormatted ?? false) || p.crossPmMeasure != null,
@@ -2098,6 +2096,24 @@
       };
     });
     hsl_showRampResults('success', null, results, unresolvedIntersections);
+  }
+
+  function hsl_logEqNeighbors(allPairs, label = '') {
+    const fmt = p => `[${p.type}${p.type === 'equation' ? (p.isSecondEq ? '(eq2)' : '(eq1)') : ''}  pfx:${p.pmPrefix ?? ''}  pm:${parseFloat(p.pmMeasure).toFixed(3)}  sfx:${p.pmSuffix ?? ''}  ar:${p.arMeasure}  od:${p.odMeasure}  desc:${p.desc ?? ''}]`;
+    const WINDOW = 3;
+    for (let i = 0; i < allPairs.length; i++) {
+      const p = allPairs[i];
+      if (p.type !== 'equation' || p.isSecondEq) continue;
+      const eq2 = allPairs[i + 1];
+      const start = Math.max(0, i - WINDOW);
+      const end   = Math.min(allPairs.length - 1, i + 1 + WINDOW);
+      console.group(`[eqLog${label ? ' ' + label : ''}] eq pair @ index ${i}  pairId:${p.eqPairId}`);
+      for (let k = start; k <= end; k++) {
+        const marker = k === i ? '► eq1' : k === i + 1 ? '► eq2' : `  [${k}]`;
+        console.log(marker, fmt(allPairs[k]));
+      }
+      console.groupEnd();
+    }
   }
 
   function hsl_showRampResults(type, message, names, unresolvedIntersections = []) {
@@ -2168,7 +2184,9 @@
           : firstNR;
       }
       const nextOd = nextEntry ? parseFloat(nextEntry.odMeasure) : NaN;
-      return (!isNaN(curOd) && !isNaN(nextOd)) ? (nextOd - curOd).toFixed(3) : '';
+      if (!isNaN(curOd) && !isNaN(nextOd)) return (nextOd - curOd).toFixed(3);
+      if (!nextEntry && (p.name?.startsWith('hsl_end_') || (p.type === 'landmark' && p.desc === 'END REALIGNMENT'))) return '0.000';
+      return '';
     });
   }
 
@@ -2191,7 +2209,7 @@
     const rowClass = p.type === 'equation'              ? 'hsl-item-eq'
                    : p.type === 'routebreak'            ? 'hsl-item-rb'
                    : p.type === 'citybegin' ||
-                     p.type === 'cityend' ||
+                     p.type === 'cityend'   ||
                      isRealignment ||
                      isIABoundary                       ? 'hsl-item-cb'
                    : p.hwyGroup === 'R'                 ? 'hsl-item-ia-r'
@@ -2227,7 +2245,7 @@
     const rowClass = p.type === 'equation'              ? 'hsl-row-eq'
                    : p.type === 'routebreak'            ? 'hsl-row-rb'
                    : p.type === 'citybegin' ||
-                     p.type === 'cityend' ||
+                     p.type === 'cityend'   ||
                      isRealignment ||
                      isIABoundary                       ? 'hsl-row-cb'
                    : p.hwyGroup === 'R'                 ? 'hsl-row-ia-r'
@@ -2569,6 +2587,7 @@
       const hgMapPre = await queryRangeLayer(unsortedPairs, 116, 'Highway_Group');
       for (const p of unsortedPairs) p.hgValue = hgMapPre.get(p.name) ?? '';
       const allPairs = fixEqPairOrder(hsl_filterRealignmentLandmarks(hsl_filterCityBoundaries(sortWithIndependentAlignments(unsortedPairs))));
+      hsl_logEqNeighbors(allPairs, 'excel');
       if (allPairs.length === 0) return;
 
       // Capture routeId/arMeasure before any merging; default to null so missing entries fail visibly
@@ -2611,7 +2630,7 @@
       const odMap = translateToOD(allPairs);
       const results = allPairs.map((p, i) => {
         let hwyGroup = hwyMap.get(p.name) ?? '';
-        let cityCode  = (p.type === 'citybegin' || p.type === 'cityend') ? (p.cityCode ?? '') : (cityMap.get(p.name) ?? '');
+        let cityCode  = (p.type === 'citybegin' || p.type === 'cityend' || p.type === 'citybreak' || p.type === 'cityresume') ? (p.cityCode ?? '') : (cityMap.get(p.name) ?? '');
         if (p.type === 'routebreak' && p.desc === 'Route Break' && !hwyGroup) {
           const resume = allPairs.slice(i + 1).find(r => r.type === 'routebreak' && r.desc === 'Route Resume');
           if (resume) {
@@ -2623,7 +2642,7 @@
           arMeasure:   arMeasureMap.get(p.name) ?? null,
           name:        p.name,
           type:        p.type,
-          featureType: p.type === 'equation' ? 'H' : p.type === 'landmark' ? 'H' : p.type === 'routebreak' ? 'H' : p.type === 'citybegin' ? 'H' : p.type === 'cityend' ? 'H' : p.type === 'intersection' ? 'I' : 'R',
+          featureType: p.type === 'equation' ? 'H' : p.type === 'landmark' ? 'H' : p.type === 'routebreak' ? 'H' : p.type === 'citybegin' ? 'H' : p.type === 'cityend' ? 'H' : p.type === 'citybreak' ? 'H' : p.type === 'cityresume' ? 'H' : p.type === 'intersection' ? 'I' : 'R',
           isCross:             p.isCross    ?? false,
           crossRouteFormatted: p.crossRouteFormatted ?? false,
           hasCrossRoute:       (p.crossRouteFormatted ?? false) || p.crossPmMeasure != null,
