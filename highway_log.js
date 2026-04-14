@@ -453,14 +453,10 @@
         // Suppress markers at the same position as any non-marker (duplicate row)
         return !_nonMarkerOD.has(od);
       });
-      console.log('[HL district/route] pairs after marker suppression:');
-      pairs.forEach((p, i) => console.log(`  [${i}] type=${p.type} name=${p.name} pmSuffix=|${p.pmSuffix}| pmMeasure=|${p.pmMeasure}| odMeasure=|${p.odMeasure}| district=${p.district} county=${p.county}`));
       _hl_routeLabel    = paddedRoute;
       _hl_directionFrom = direction.from;
       _hl_directionTo   = direction.to;
       _hl_allResults    = await hl_buildResults(pairs);
-      console.log('[HL] final results for report:');
-      _hl_allResults.forEach((r, i) => console.log(`  [${i}] type=${r.type} location=${r.location} lengthMi=${r.lengthMi} cntyOdom=${r.cntyOdom} city=${r.city} ru=${r.ru} spd=${r.spd} ter=${r.ter} hg=${r.hg} ac=${r.ac} district=${r.district} county=${r.county} odMeasure=${r.odMeasure}`));
       _hl_currentPage   = 0;
       _hl_generatedOn   = new Date().toLocaleString();
       hl_renderPage();
@@ -543,14 +539,10 @@
         // Suppress markers at the same position as any non-marker (duplicate row)
         return !_nonMarkerOD.has(od);
       });
-      console.log('[HL translate] pairs after marker suppression:');
-      pairs.forEach((p, i) => console.log(`  [${i}] type=${p.type} name=${p.name} pmSuffix=|${p.pmSuffix}| pmMeasure=|${p.pmMeasure}| odMeasure=|${p.odMeasure}| district=${p.district} county=${p.county}`));
       _hl_routeLabel    = paddedRouteNum;
       _hl_directionFrom = direction.from;
       _hl_directionTo   = direction.to;
       _hl_allResults    = await hl_buildResults(pairs);
-      console.log('[HL] final results for report:');
-      _hl_allResults.forEach((r, i) => console.log(`  [${i}] type=${r.type} location=${r.location} lengthMi=${r.lengthMi} cntyOdom=${r.cntyOdom} city=${r.city} ru=${r.ru} spd=${r.spd} ter=${r.ter} hg=${r.hg} ac=${r.ac} district=${r.district} county=${r.county} odMeasure=${r.odMeasure}`));
       _hl_currentPage   = 0;
       _hl_generatedOn   = new Date().toLocaleString();
       hl_renderPage();
