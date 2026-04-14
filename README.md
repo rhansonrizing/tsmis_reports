@@ -81,7 +81,7 @@ Suppressed (not prepended to the list) if **any FT=H record** in `allPairs` has 
 
 ### City Begin/End Records (`hsl_filterCityBoundaries`)
 
-Applied before the created begin/end check. Each `citybegin` and `cityend` record is dropped if **any** of the following are true:
+Applied before the created begin/end check. Each `citybegin`, `cityend`, `citybreak`, and `cityresume` record is dropped if **any** of the following are true:
 
 1. Its AR measure falls outside the non-city AR extent by more than **0.005** (removes out-of-district city records that leak through because layer 74 has no district field).
 2. Its OD measure is **negative**.
@@ -89,7 +89,14 @@ Applied before the created begin/end check. Each `citybegin` and `cityend` recor
 
 City begin/end records are always displayed even when another H record shares the same PM key.
 
-Additionally, when a city spans multiple non-contiguous route segments, `hsl_deduplicateCitySegments` retains only the **first** `citybegin` (lowest AR) and the **last** `cityend` (highest AR) for each city code, dropping all intermediate segment endpoints.
+Additionally, when a city spans multiple non-contiguous route segments, `hsl_deduplicateCitySegments` transforms intermediate endpoints rather than dropping them:
+- First `citybegin` (lowest AR) and last `cityend` (highest AR) are kept as-is.
+- Intermediate `cityend` records become type `citybreak` (desc: `CITY BREAK: <code>`).
+- Intermediate `citybegin` records become type `cityresume` (desc: `CITY RESUME: <code>`).
+
+For single-segment cities the records pass through unchanged.
+
+City begin/end records on an **L independent alignment** (`EndPMSuffix === 'L'` or `BeginPMSuffix === 'L'`) are suppressed at source — the city boundary was already crossed on the main alignment before the split.
 
 ---
 
@@ -120,6 +127,85 @@ An IA boundary record is suppressed (not added to the report) if any of the foll
 If the record has no valid PM measure it is always shown.
 
 IA boundary records are excluded from distance calculations.
+
+---
+
+---
+
+## Equation Point Logic (`queryEquationPointsFromNetwork`)
+
+Equation points mark locations where one PM numbering system ends and another begins (e.g., at county lines where PM resets to 0). Each equation point is rendered as a pair of rows: an **EQUATES TO** row (eq1) showing the departing PM, and a second row (eq2) showing the arriving PM with `E` in the suffix column.
+
+### Data Source
+
+Layer 1 (PM network calibration points, `NetworkId=2`). Queried using `RouteId LIKE '${county}${route}%'` (e.g., `TUO108%`). Each calibration point carries its PM measure and a `RouteId` that encodes:
+
+| Position | Field | Example |
+|---|---|---|
+| 0–2 | County code | `TUO` |
+| 3–5 | Route number | `108` |
+| 6 | Route suffix | `.` |
+| 7 | PM prefix | `R`, `T`, `.` |
+| 8 | PM suffix | `.`, `L` |
+| 9 | Alignment | `R`, `L`, `.` |
+
+Each point is translated to AR (layer 4) and OD (layer 5) simultaneously. Points outside the queried segment's AR range are discarded.
+
+### Pairing (two passes)
+
+**Pass 1 — OD-based:** Points are grouped by OD measure (3dp). A group of exactly 2 distinct PM values at the same OD forms a valid equation pair. Groups are skipped if:
+- More than 2 distinct PMs are present at the same OD
+- The two points have mismatched `pmSuffix='L'` (one is L-suffix, the other is not)
+
+Points paired in Pass 1 are excluded from Pass 2.
+
+**Pass 2 — AR fallback:** For unpaired points, any two points within AR ≤ 0.005 of each other are paired. A candidate pair is skipped if:
+- PMs are equal to 3dp (duplicate RouteId variants of the same calibration point)
+- AR < 0.0005 AND PM difference < threshold (0.01 for L-suffix pairs, 0.5 otherwise) — near-identical duplicates
+- PM pair key already used (prevents double-pairing)
+
+Each point pairs with at most one other.
+
+### Pair structure
+
+| Field | eq1 (`isSecondEq=false`) | eq2 (`isSecondEq=true`) |
+|---|---|---|
+| `desc` | `'PM EQUATION'` | `''` |
+| `arMeasure` | lower AR | higher AR |
+| `pmSuffix` | from RouteId | `'E'` (rendering marker), or `'L'` if both points are L-suffix |
+| Rendered label | `EQUATES TO` spanning columns | normal PM row with `E` in suffix column |
+
+### Sorting
+
+`sortWithIndependentAlignments` handles equation records specially:
+
+1. eq1 records are **removed** from the sort array before sorting, stored in a map by `eqPairId`.
+2. **Alignment-start AR fixup** — before sorting, eq2 records with a non-empty `pmPrefix` and `pmMeasure ≈ 0` (marking the start of an R/L alignment) have their `arMeasure` clamped to just below the minimum AR of all non-IA-boundary records sharing the same `pmPrefix` (`Math.min(eq2.arMeasure, minPfxAr - 0.0005)`). This handles both undershoot and overshoot from calibration translation, ensuring the outer grouping loop never reaches an alignment record before eq2.
+3. eq2 records sort **before all other types** at the same rounded AR position. City boundary records sort before intersections/ramps when their AR differs slightly but their PM key matches (layer 74 AR values don't always align exactly with translated intersection ARs). `pmPrefix` `'.'` and `''` are normalized to the same key.
+4. The grouping loop that separates R and L sections has two guards to prevent equation records from being misclassified: (a) equation records are excluded from `hgValue`-based section consumption (their `hgValue` reflects the alignment at their calibration AR, not their logical position); (b) eq2 records are excluded from the E-suffix end-marker group. BEGIN/END INDEPENDENT ALIGNMENT boundary landmarks are also excluded from triggering section grouping and pass through individually.
+5. After sorting, each eq1 is **re-inserted** immediately before its eq2 partner.
+6. When a non-equation record shares OD/AR with an eq2, it is placed before the pair if its PM matches eq1, or after if its PM matches eq2.
+
+### `fixEqPairOrder`
+
+When eq1 and eq2 share the same AR to 3dp, the lower-AR sort tiebreak may not correctly determine which PM belongs on the departing side vs. the arriving side. This pass corrects the order by reading prefix context from surrounding records.
+
+**Algorithm:**
+1. For each consecutive eq1/eq2 pair that share the same AR to 3dp and have different PM prefixes:
+2. Scan backward past ramp and intersection records to find the nearest preceding **H-type** record (landmark, route break, city boundary). Scan forward similarly for the nearest following H-type record.
+3. **Primary signal:** if eq2's prefix matches the preceding H context and eq1's does not → swap.
+4. **Secondary signal** (no preceding H record found): if eq1's prefix matches the following H context and eq2's does not → swap.
+5. Swaps only PM-data fields (`pmPrefix`, `pmSuffix`, `pmMeasure`, `routeId`, `arMeasure`, `odMeasure`, `county`, `name`). Structural fields (`desc`, `isSecondEq`, `eqPairId`, `type`) stay in place so rendering labels are unaffected.
+
+**Prefix normalization:** `'.'` and `''` are treated as equivalent (no prefix) before all comparisons. Equation records store "no prefix" as `''`; landmark and other records store it as `'.'`.
+
+**Why H-type only:** Ramp and intersection records can carry a PM prefix belonging to the *arriving* PM system, which would give the wrong signal if used as context. Only landmark-class records reliably reflect the established PM system at that location.
+
+---
+
+## Debug Helpers
+
+`hsl_logEqNeighbors(allPairs, label)` — called automatically after `fixEqPairOrder` in both district/route and postmile modes. Prints each equation pair to the console with 3 records of context on each side. Useful for diagnosing sort order and prefix-swap decisions. Output is grouped under `[eqLog <label>] eq pair @ index N  pairId:<id>`.
 
 ---
 

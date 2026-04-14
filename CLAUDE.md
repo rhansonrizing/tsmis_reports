@@ -193,7 +193,7 @@ Enter From/To postmiles
 ### Landmark Object
 ```javascript
 {
-  type: 'landmark'|'equation'|'routebreak'|'citybegin'|'cityend'|'districtbegin'|'districtend',
+  type: 'landmark'|'equation'|'routebreak'|'citybegin'|'cityend'|'citybreak'|'cityresume'|'districtbegin'|'districtend',
   name, desc, routeId, arMeasure, odMeasure,
   pmPrefix, pmSuffix, pmMeasure, county, district,
   alignment,       // 'R' or 'L'
@@ -301,58 +301,48 @@ const main = pairs.filter(p => {
 ```
 Equation points come in pairs (source measure → "EQUATES TO" measure). The first of each pair (`isSecondEq = false`) is removed from the main array and stored by `eqPairId`. It will be re-inserted immediately before its partner in Step 4.
 
-#### Step 2 — Sort remaining records by ODMeasure
+#### Step 1.5 — Alignment-start AR fixup (pre-sort)
+
+Before sorting, eq2 records with a non-empty `pmPrefix` and `pmMeasure ≈ 0` (marking the start of an R/L alignment) have their `arMeasure` clamped:
+
 ```javascript
-main.sort((a, b) => {
-  const aVal = isNaN(parseFloat(a.odMeasure)) ? Infinity : parseFloat(a.odMeasure);
-  const bVal = isNaN(parseFloat(b.odMeasure)) ? Infinity : parseFloat(b.odMeasure);
-  const diff = aVal - bVal;
-  if (Math.abs(diff) > 0.001) return diff;
-  // Tiebreak at same OD position:
-  // routebreaks sort FIRST (they mark the position cleanly)
-  // E-suffix records sort LAST (end-of-alignment markers)
-  if (a.type === 'routebreak' && b.type !== 'routebreak') return -1;
-  if (a.type !== 'routebreak' && b.type === 'routebreak') return 1;
-  if (a.pmSuffix === 'E' && b.pmSuffix !== 'E') return 1;
-  if (a.pmSuffix !== 'E' && b.pmSuffix === 'E') return -1;
-  return 0;
-});
+p.arMeasure = Math.min(p.arMeasure, minPfxAr - 0.0005);
 ```
-NaN ODMeasures are treated as `Infinity` — this prevents comparator inconsistency that corrupts TimSort and scrambles nearby records.
+
+where `minPfxAr` is the minimum AR of all non-IA-boundary records sharing the same `pmPrefix`. This handles both undershoot and overshoot from calibration translation — without it the outer grouping loop could reach an R/L record before eq2 and start a premature section.
+
+#### Step 2 — Sort remaining records by ARMeasure
+
+Records are sorted by AR rounded to 3dp. Tiebreaks (in order):
+- If `diff !== 0` but one record is a city boundary (`citybegin`/`cityend`) and the other is an intersection or ramp with the **same normalized PM key**: city boundary sorts first. Handles cases where layer 74 AR values don't exactly match translated intersection ARs.
+- `pmPrefix` `'.'` and `''` are normalized to `''` in all PM key comparisons.
+- Equation records sort before all others at the same rounded AR.
+- E-suffix records sort last at the same AR (except eq2, which uses `pmSuffix='E'` as a rendering marker and must not be treated as an end-marker).
+- Within the same PM key: H (landmarks/equations/route breaks/city records) before I (intersections) before R (ramps). Within H, HG=H records sort before others.
+
+NaN AR values are treated as `Infinity`.
 
 #### Step 3 — Group independent alignment sections (R before L)
-```javascript
-const grouped = [];
-let i = 0;
-while (i < main.length) {
-  if (main[i].pmSuffix === 'R' || main[i].pmSuffix === 'L') {
-    const j = i;
-    // Consume the entire independent section:
-    //   - R and L suffix records
-    //   - E suffix records (end-of-alignment markers)
-    //   - dot-suffix records whose hgValue is 'R' or 'L'
-    //     (END INDEP ALIGN landmarks often carry pmSuffix='.' but hgValue='R')
-    while (i < main.length) {
-      const cur = main[i];
-      if (cur.pmSuffix === 'R' || cur.pmSuffix === 'L' || cur.pmSuffix === 'E') { i++; }
-      else if (cur.hgValue === 'R' || cur.hgValue === 'L') { i++; }
-      else { break; }
-    }
-    const section = main.slice(j, i);
 
-    // Output R group first, then L group, then E markers
-    grouped.push(...section.filter(p =>
-      p.pmSuffix === 'R' || (p.pmSuffix !== 'L' && p.pmSuffix !== 'E' && p.hgValue === 'R')
-    ));
-    grouped.push(...section.filter(p =>
-      p.pmSuffix === 'L' || (p.pmSuffix !== 'R' && p.pmSuffix !== 'E' && p.hgValue === 'L')
-    ));
-    grouped.push(...section.filter(p => p.pmSuffix === 'E'));
-  } else {
-    grouped.push(main[i++]);   // normal record — pass through unchanged
-  }
+The outer loop triggers a section when it sees an R or L pmSuffix record **that is not an IA boundary landmark** (BEGIN/END LEFT/RIGHT INDEPENDENT ALIGNMENT). Those boundary landmarks pass through the `else` branch individually at their natural AR position.
+
+```javascript
+if ((main[i].pmSuffix === 'R' || main[i].pmSuffix === 'L') && !isIABoundaryRec(main[i])) {
+  // section grouping ...
+} else {
+  grouped.push(main[i++]);
 }
 ```
+
+The inner loop that consumes the section has two critical guards:
+1. **Equation records are never consumed by `hgValue`** — their HG reflects the alignment at their calibration-derived AR, not their logical position. Consuming them via `hgValue` would pull eq2 into the section and reorder it after the L group.
+2. **eq2 records with `pmSuffix='E'` break the inner loop** — eq2 uses `sfx:E` as a rendering marker, not as an alignment boundary.
+
+Section output order:
+1. R group: `pmSuffix === 'R'` records confirmed by `hgValue === 'R'` or `alignment === 'R'`
+2. L group: `pmSuffix === 'L'` records
+3. E-suffix end markers: `pmSuffix === 'E' && type !== 'equation'`
+4. Trailing dot-suffix records (END INDEP ALIGN via `hgValue`), then unconfirmed R-suffix records
 
 **Key edge case:** `pmPrefix` is unreliable for identifying END INDEP ALIGN landmarks — some carry `pmPrefix='.'` instead of `'R'`. The code uses `hgValue` (Highway Group value from layer 116) exclusively as the fallback classifier.
 
@@ -376,10 +366,8 @@ This ensures equation point pairs always appear adjacently in the final output, 
 sortWithIndependentAlignments(unsortedPairs)
   ↓
 hsl_filterCityBoundaries(sorted)
-  Removes citybegin/cityend records whose pmKey (prefix|measure.3dp|suffix)
-  already exists in the non-city record set — prevents duplicate rows where
-  a city boundary coincides with a ramp or landmark.
-  Also drops any city boundary with ODMeasure < 0.
+  Drops citybegin/cityend/citybreak/cityresume records whose AR falls outside
+  the non-city AR extent, whose ODMeasure < 0, or whose pmMeasure < 0.
   ↓
 hsl_filterRealignmentLandmarks(filtered)
   Removes BEGIN/END REALIGNMENT landmarks whose pmKey matches any other record.
@@ -391,8 +379,10 @@ allPairs — final ordered list passed to hsl_renderPage()
 
 ### pmKey Definition (used by both filter functions)
 ```javascript
-const pmKey = p => `${p.pmPrefix}|${parseFloat(p.pmMeasure).toFixed(3)}|${p.pmSuffix}`;
-// e.g., ".|10.500|R"  or  "C|0.000|."
+// '.' and '' are normalized to '' (no prefix)
+const normPfx = p => (p.pmPrefix === '.' ? '' : (p.pmPrefix ?? ''));
+const pmKey = p => `${normPfx(p)}|${parseFloat(p.pmMeasure).toFixed(3)}|${p.pmSuffix}`;
+// e.g., "R|0.000|R"  or  "C|0.000|."
 ```
 
 ### Visual Result
@@ -414,6 +404,44 @@ OD 10.2  Ramp B  (pmSuffix=L)
 OD 10.4  Ramp D  (pmSuffix=L)
 OD 10.5  End     (pmSuffix=E)
 ```
+
+---
+
+## City Segment Deduplication (`hsl_deduplicateCitySegments`)
+
+When a city code appears in multiple non-contiguous segments on the same route, intermediate endpoints are converted (not dropped):
+
+| Position | Original type | New type | New desc |
+|----------|--------------|----------|---------|
+| First record (lowest AR) | `citybegin` | `citybegin` | unchanged |
+| Intermediate exit | `cityend` | `citybreak` | `CITY BREAK: <code>` |
+| Intermediate re-entry | `citybegin` | `cityresume` | `CITY RESUME: <code>` |
+| Last record (highest AR) | `cityend` | `cityend` | unchanged |
+
+Single-segment cities pass through unchanged. All four types (`citybegin`, `cityend`, `citybreak`, `cityresume`) are treated identically by `hsl_filterCityBoundaries` (AR extent / OD / PM range checks) and by the render pipeline (`featureType='H'`, `hsl-item-cb` row class, `cityCode` read directly from the record).
+
+City begin/end records on an L independent alignment are suppressed at source in `hsl_queryCityBoundaries` (`BeginPMSuffix === 'L'` or `EndPMSuffix === 'L'`) — the city boundary was already crossed on the main alignment before the split.
+
+---
+
+## Debug Helper (`hsl_logEqNeighbors`)
+
+```javascript
+hsl_logEqNeighbors(allPairs, label)
+```
+
+Called automatically after `fixEqPairOrder` in both district/route and postmile modes. Prints each equation pair with 3 records of context on each side:
+
+```
+[eqLog district/route] eq pair @ index N  pairId:<id>
+  [N-3]  [landmark  pfx:R  pm:...  ...]
+  ...
+► eq1   [equation(eq1)  pfx:  pm:...  ...]
+► eq2   [equation(eq2)  pfx:R  pm:...  ...]
+  [N+2]  [landmark  pfx:R  pm:...  ...]
+```
+
+Useful for diagnosing sort order, prefix-swap decisions, and alignment grouping issues.
 
 ---
 
