@@ -1,4 +1,4 @@
-  // ── HSL: Shared helpers ───────────────────────────────────────────────────
+﻿  // â”€â”€ HSL: Shared helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   // Builds P/S segments for a route, filtering by which routeIds exist in _allRouteIds.
   // Returns { segments, routeSuffix } or { segments: [], routeSuffix } if none found.
@@ -24,7 +24,7 @@
     // Suffix is intentionally excluded: equation points carry pmSuffix 'E' while
     // realignment landmarks at the same location carry '.', so a suffix-aware key
     // would miss the match. Prefix + measure is sufficient to identify the same PM point.
-    // pmPrefix '.' and '' are both "no prefix" — normalize to '' so IA boundary records
+    // pmPrefix '.' and '' are both "no prefix" â€” normalize to '' so IA boundary records
     // (which store '' after stripping '.') match H records that store '.' literally.
     const normPfx = p => (p.pmPrefix === '.' ? '' : (p.pmPrefix ?? ''));
     const pmKey = p => `${normPfx(p)}|${parseFloat(p.pmMeasure).toFixed(3)}`;
@@ -37,7 +37,7 @@
     const naturalArMeasures = pairs
       .filter(p => isNaturalH(p) && p.arMeasure != null && !isNaN(p.arMeasure))
       .map(p => p.arMeasure);
-    // AR measures where a BEGIN REALIGNMENT exists — an END REALIGNMENT at the
+    // AR measures where a BEGIN REALIGNMENT exists â€” an END REALIGNMENT at the
     // same point means the route transitions directly into an independent
     // alignment section (the realignment continues rather than ending).
     const beginArMeasures = pairs
@@ -91,10 +91,10 @@
        </div>`;
   }
 
-  // ── HSL: Highway Sequence Listing — Query functions ──────────────────────
+  // â”€â”€ HSL: Highway Sequence Listing â€” Query functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
-  // ── HSL: Query landmarks (layer 123) ─────────────────────────────────────
+  // â”€â”€ HSL: Query landmarks (layer 123) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   /** Queries landmark point events from layer 123 for the given measure segments. */
   async function queryLandmarks(segments, routeSuffix, district = null, county = null) {
@@ -148,7 +148,7 @@
     }
     const features = data.features;
     if (!Array.isArray(features)) return [];
-    if (data.exceededTransferLimit) console.warn('[queryLandmarks] exceededTransferLimit — results truncated.');
+    if (data.exceededTransferLimit) console.warn('[queryLandmarks] exceededTransferLimit â€” results truncated.');
     const nameMap = new Map();
     for (const f of features) {
       const a = f.attributes ?? {};
@@ -184,7 +184,7 @@
     }
     const pairs = Array.from(nameMap.values());
 
-    // Translate AR → OD for all landmarks so sort position reflects the
+    // Translate AR â†’ OD for all landmarks so sort position reflects the
     // reference-date network state rather than the stale stored ODMeasure.
     const routeNumDigits = segments[0]?.fromBest.routeId.match(/\d{3}/)?.[0] ?? null;
     const CHUNK = 200;
@@ -216,7 +216,7 @@
     return pairs;
   }
 
-  // ── HSL: Query route breaks (layer 133) ───────────────────────────────────
+  // â”€â”€ HSL: Query route breaks (layer 133) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   /** Queries route break point events from layer 133 for the given measure segments. */
   async function queryRouteBreaks(segments, routeSuffix, district = null, county = null) {
@@ -270,7 +270,7 @@
     }
     const features = data.features;
     if (!Array.isArray(features)) return [];
-    if (data.exceededTransferLimit) console.warn('[queryRouteBreaks] exceededTransferLimit — results truncated.');
+    if (data.exceededTransferLimit) console.warn('[queryRouteBreaks] exceededTransferLimit â€” results truncated.');
     const pairs = features.map(f => {
       const a = f.attributes ?? {};
       return {
@@ -291,7 +291,7 @@
       };
     });
 
-    // For any route break missing an OD measure, translate AR → OD to fill it in.
+    // For any route break missing an OD measure, translate AR â†’ OD to fill it in.
     const missing = pairs.filter(p => p.odMeasure === '' && p.routeId && p.arMeasure != null);
     if (missing.length > 0) {
       const CHUNK = 200;
@@ -325,7 +325,7 @@
     return pairs;
   }
 
-  // ── HSL: Query independent alignment boundaries (layer 3) ───────────────────
+  // â”€â”€ HSL: Query independent alignment boundaries (layer 3) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   /** Queries layer 3 for L/R alignment segments and returns synthetic BEGIN/END
    *  landmark pairs at their PM boundaries. Suppression (if an H record already
@@ -476,7 +476,7 @@
     return pairs;
   }
 
-  // ── HSL: Query equation points from calibration points (layer 1) ──────────
+  // â”€â”€ HSL: Query equation points from calibration points (layer 1) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Finds equation point pairs by querying NetworkId=2 calibration points,
   // translating them to AllRoads AR, then pairing points within 0.001 AR.
 
@@ -588,9 +588,9 @@
     const usedPmPairs = new Set();
     const odPaired    = new Set(); // point references paired in the OD pass
 
-    // ── Pass 1: OD-based pairing ──────────────────────────────────────────────
+    // â”€â”€ Pass 1: OD-based pairing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Group calibration points by OD measure (3dp). Two points at the same OD
-    // represent the two sides of one equation point — the physical location where
+    // represent the two sides of one equation point â€” the physical location where
     // one PM system ends and another begins.
     const byOd = new Map();
     for (const pt of points) {
@@ -602,7 +602,7 @@
     }
 
     for (const [odKey, group] of byOd) {
-      // Deduplicate within the group by PM measure (3dp) — multiple RouteId
+      // Deduplicate within the group by PM measure (3dp) â€” multiple RouteId
       // variants of the same calibration point share the same PM and OD and
       // should count as one endpoint, not two.
       const byPm = new Map();
@@ -667,7 +667,7 @@
       });
     }
 
-    // ── Pass 2: AR-based fallback ─────────────────────────────────────────────
+    // â”€â”€ Pass 2: AR-based fallback â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // For any points not paired in pass 1 (no OD translation, ambiguous multi-PM
     // OD group, or indL-mismatch), attempt to pair by AR proximity (within 0.005).
     const used = new Set();
@@ -741,12 +741,12 @@
     return pairs;
   }
 
-  // ── HSL: Query city begin records (layer 74) ─────────────────────────────
+  // â”€â”€ HSL: Query city begin records (layer 74) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   /** Returns a synthetic "BEGIN <cityCode>" record at the start of each city
-   *  range on the route. OD is obtained by translating FromARMeasure AR → OD. */
+   *  range on the route. OD is obtained by translating FromARMeasure AR â†’ OD. */
   async function queryCityBegins(segments, routeNumDigits, district = null, county = null) {
-    // Include both _P and _S RouteIDs — city records on L independent alignments
+    // Include both _P and _S RouteIDs â€” city records on L independent alignments
     // are stored against the _S route and would be missed if only _P is queried.
     const segClauses = segments.flatMap(({ fromBest, toBest }) => {
       const rid   = fromBest.routeId.endsWith('_S') ? fromBest.routeId.slice(0, -2) + '_P' : fromBest.routeId;
@@ -761,7 +761,7 @@
     const uniqueSegClauses = [...new Set(segClauses)];
     // Layer 74 is filtered by RouteID + measure range only. Although it has BeginCounty/
     // EndCounty fields, a city range can span a county boundary so we cannot filter by county
-    // in the WHERE clause — the county filter is applied post-translation below.
+    // in the WHERE clause â€” the county filter is applied post-translation below.
     const dateFilter = getDateFilter();
     const where = uniqueSegClauses.length === 1
       ? uniqueSegClauses[0].slice(1, -1) + dateFilter
@@ -805,7 +805,7 @@
     const pairs = features.flatMap(f => {
       const a        = f.attributes ?? {};
       const cityCode = a.City_Code ?? '';
-      // Skip city begin/end when they fall on an L independent alignment —
+      // Skip city begin/end when they fall on an L independent alignment â€”
       // the city boundary was already crossed on the main alignment before the split.
       const beginSuffix = a.BeginPMSuffix ?? '.';
       const endSuffix   = a.EndPMSuffix   ?? '.';
@@ -847,7 +847,7 @@
       return records;
     });
 
-    // Translate AR → PM (layer 3) and OD (layer 5) to get sort position and PM attribution.
+    // Translate AR â†’ PM (layer 3) and OD (layer 5) to get sort position and PM attribution.
     const CHUNK = 200;
     const chunks = [];
     for (let i = 0; i < pairs.length; i += CHUNK) chunks.push(pairs.slice(i, i + CHUNK));
@@ -875,7 +875,7 @@
                     ?? xlated[0];
         if (result?.measure != null) chunk[idx].odMeasure = String(result.measure);
       });
-      // Apply PM attributes — routeId format: county(3)+routeNum(3)+suffix(1)+pmPrefix(1)+pmSuffix(1)+align(1)
+      // Apply PM attributes â€” routeId format: county(3)+routeNum(3)+suffix(1)+pmPrefix(1)+pmSuffix(1)+align(1)
       (pmData.locations ?? []).forEach((loc, idx) => {
         const xlated = loc.translatedLocations ?? [];
         const result = xlated.find(r => r.measure != null && routeNumDigits && r.routeId?.includes(routeNumDigits))
@@ -907,13 +907,13 @@
   /**
    * For cities that appear in multiple non-contiguous segments on the same route:
    * - Keep the first citybegin (lowest arMeasure) and last cityend (highest arMeasure) as-is.
-   * - Convert intermediate cityend records → type 'citybreak'  (desc: "CITY BREAK: <code>").
-   * - Convert intermediate citybegin records → type 'cityresume' (desc: "CITY RESUME: <code>").
+   * - Convert intermediate cityend records â†’ type 'citybreak'  (desc: "CITY BREAK: <code>").
+   * - Convert intermediate citybegin records â†’ type 'cityresume' (desc: "CITY RESUME: <code>").
    * For cities with a single contiguous segment, records pass through unchanged.
    */
   function hsl_deduplicateCitySegments(pairs) {
     // Group citybegin/cityend records by cityCode, sorted by arMeasure.
-    const cityGroups = new Map(); // cityCode → [records sorted by arMeasure]
+    const cityGroups = new Map(); // cityCode â†’ [records sorted by arMeasure]
     for (const p of pairs) {
       if (p.type === 'citybegin' || p.type === 'cityend') {
         if (!cityGroups.has(p.cityCode)) cityGroups.set(p.cityCode, []);
@@ -921,10 +921,10 @@
       }
     }
 
-    // Build name → new type for records that need to change.
-    const typeOverride = new Map(); // name → new type string
+    // Build name â†’ new type for records that need to change.
+    const typeOverride = new Map(); // name â†’ new type string
     for (const [, records] of cityGroups) {
-      if (records.length <= 2) continue; // Single segment — nothing to transform.
+      if (records.length <= 2) continue; // Single segment â€” nothing to transform.
       records.sort((a, b) => a.arMeasure - b.arMeasure);
       records.forEach((r, i) => {
         if (i === 0)                    typeOverride.set(r.name, 'citybegin');
@@ -948,245 +948,19 @@
     });
   }
 
-  // ── HSL: Query intersections (layers 0, 151, g2m, translate) ────────────
+  // â”€â”€ HSL: Query intersections (layers 0, 151, g2m, translate) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   /**
    * Queries intersections by delegating to queryIntersectionsByDistrict, which
    * queries layer 151 directly via SQL (RouteNum + optional District_Code/County_Code).
    *
-   * The former geometry-based path (measureToGeometry → layer 0 spatial → layer 149 AOI)
+   * The former geometry-based path (measureToGeometry â†’ layer 0 spatial â†’ layer 149 AOI)
    * was removed because it hit layer 0's record-count ceiling on long routes, causing
    * intersections near the far end of the route (e.g. VEN county on route 001) to be
    * silently dropped. The layer 151 SQL path is both faster and complete.
    */
   async function queryIntersections(segments, routeNum, district = null, county = null) {
     return await queryIntersectionsByDistrict(segments, routeNum, district, county);
-  }
-
-  /** @deprecated — geometry-based intersection path, kept for reference only (do not call).
-   * Converts measure segments to route polyline geometry (measureToGeometry),
-   * spatially queries layer 0 for intersection points, filters by layer 149 AOI,
-   * then looks up intersection attributes in layer 151.
-   * Replaced by queryIntersectionsByDistrict due to layer 0 record-count truncation. */
-  async function _queryIntersections_geometryPath(segments, routeNum) {
-    // Path 1: no spatial filter — cast a geometry net over the whole route
-    try {
-      const rnMatch        = String(routeNum).match(/^(\d+)([A-Z]?)$/);
-      const routeNumDigits = rnMatch ? rnMatch[1].padStart(3, '0') : String(routeNum).padStart(3, '0');
-      const routeSuffix    = rnMatch ? rnMatch[2] : '';
-      const geoLocations = segments.map(({ fromBest, toBest }) => ({
-        routeId:     fromBest.routeId,
-        fromMeasure: Math.min(fromBest.measure, toBest.measure) - 0.005,
-        toMeasure:   Math.max(fromBest.measure, toBest.measure) + 0.005
-      }));
-      const m2gBody = new URLSearchParams({
-        locations: JSON.stringify(geoLocations),
-        ...versionParam(),
-        f:     'json',
-        token: _token
-      });
-      const m2gResp = await fetch(
-        `${CONFIG.mapServiceUrl}/exts/LRServer/networkLayers/4/measureToGeometry`,
-        { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: m2gBody.toString() }
-      );
-      const m2gData = await m2gResp.json();
-      const segmentGeometries = (m2gData.locations ?? [])
-        .filter(l => l.geometries?.length > 0 || l.geometry)
-        .map(l => l.geometry ?? l.geometries?.[0])
-        .filter(Boolean);
-      if (segmentGeometries.length === 0) return { pairs: [], unresolved: [] };
-      const layer0Results = await Promise.all(segmentGeometries.map(geom => {
-        const qBody = new URLSearchParams({
-          where:          '1=1',
-          geometry:       JSON.stringify(geom),
-          geometryType:   'esriGeometryPolyline',
-          spatialRel:     'esriSpatialRelIntersects',
-          outFields:      'INTERSECTION_ID',
-          returnGeometry: 'true',
-          ...versionParam(),
-          f:     'json',
-          token: _token
-        });
-        return fetch(`${CONFIG.mapServiceUrl}/0/query`,
-          { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: qBody.toString() }
-        ).then(r => r.json());
-      }));
-      const intersectionMap = new Map();
-      for (const qData of layer0Results) {
-        for (const f of qData.features ?? []) {
-          const id = f.attributes?.INTERSECTION_ID;
-          if (id != null && !intersectionMap.has(id)) intersectionMap.set(id, f.geometry);
-        }
-      }
-      if (intersectionMap.size === 0) return { pairs: [], unresolved: [] };
-      const INT_CHUNK = 200;
-      const idList   = Array.from(intersectionMap.keys());
-      const allGeoms = Array.from(intersectionMap.values());
-      const g2mBody = new URLSearchParams({
-        locations:  JSON.stringify(allGeoms.map(g => ({ geometry: g }))),
-        tolerance:  '50',
-        ...versionParam(),
-        f:     'json',
-        token: _token
-      });
-      const idChunks = chunkArray(idList, INT_CHUNK);
-      const dateFilter = getDateFilter('Int_Geometry_Begin_Date', 'Int_Geometry_End_Date');
-      const [aoiFeatures, g2mData] = await Promise.all([
-        Promise.all(idChunks.map(chunk => {
-          const chunkList = chunk.map(id => `'${String(id).replace(/'/g, "''")}'`).join(',');
-          const aoiBody = new URLSearchParams({
-            where:          `INTERSECTION_ID IN (${chunkList})`,
-            outFields:      'INTERSECTION_ID',
-            returnGeometry: 'false',
-            ...versionParam(),
-            f:     'json',
-            token: _token
-          });
-          return fetch(`${CONFIG.mapServiceUrl}/149/query`,
-            { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: aoiBody.toString() }
-          ).then(r => r.json()).then(d => d.features ?? []).catch(() => []);
-        })).then(chunks => chunks.flat()),
-        fetch(`${CONFIG.mapServiceUrl}/exts/LRServer/networkLayers/4/geometryToMeasure`,
-          { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: g2mBody.toString() }
-        ).then(r => r.json())
-      ]);
-      const validIds = new Set(
-        aoiFeatures.map(f => f.attributes?.INTERSECTION_ID).filter(id => id != null)
-      );
-      if (validIds.size === 0) return { pairs: [], unresolved: [] };
-      const segRouteIds = new Set(geoLocations.map(g => g.routeId));
-      const idToMeasure = new Map();
-      (g2mData.locations ?? []).forEach((loc, idx) => {
-        const id = idList[idx];
-        if (!validIds.has(id)) return;
-        const results = loc.results ?? [];
-        const result  = results.find(r => segRouteIds.has(r.routeId) && r.distance === 0)
-                     ?? results.find(r => segRouteIds.has(r.routeId))
-                     ?? results[0];
-        if (result?.routeId && result.measure != null) {
-          idToMeasure.set(id, { routeId: result.routeId, arMeasure: result.measure });
-        }
-      });
-      if (idToMeasure.size === 0) return { pairs: [], unresolved: [] };
-      const measuredIds  = Array.from(idToMeasure.keys());
-      const detailChunks = chunkArray(measuredIds, INT_CHUNK);
-      const outFields151 = 'INTERSECTION_ID,Intersection_Name,County_Code,District_Code,Main_RouteNum,Main_RouteSuffix,Main_PMPrefix,Main_PMSuffix,Main_PMMeasure,Main_Alignment,Cross_RouteNum,Cross_RouteSuffix,Cross_PMPrefix,Cross_PMSuffix,Cross_PMMeasure,Cross_Alignment';
-      const allDetailFeatures = (await Promise.all(detailChunks.map(async chunk => {
-        const chunkList151 = chunk.map(id => `'${String(id).replace(/'/g, "''")}'`).join(',');
-        const detailWhere  = `INTERSECTION_ID IN (${chunkList151}) AND LRS_DATE_RETIRE IS NULL${dateFilter}`;
-        const detailBody   = new URLSearchParams({
-          where:          detailWhere,
-          outFields:      outFields151,
-          returnGeometry: 'false',
-          ...versionParam(),
-          f:     'json',
-          token: _token
-        });
-        const detailData = await fetch(
-          `${CONFIG.mapServiceUrl}/151/query`,
-          { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: detailBody.toString() }
-        ).then(r => r.json()).catch(() => ({}));
-        if (detailData.error) {
-          console.error('[queryIntersections] layer 151 API error:', detailData.error.code, detailData.error.message);
-          return [];
-        }
-        return detailData.features ?? [];
-      }))).flat();
-      const detailMap = new Map();
-      for (const f of allDetailFeatures) {
-        const a = f.attributes ?? {};
-        if (a.INTERSECTION_ID == null || detailMap.has(a.INTERSECTION_ID)) continue;
-        const mainNum    = String(a.Main_RouteNum  ?? '').padStart(3, '0');
-        const crossNum   = String(a.Cross_RouteNum ?? '').padStart(3, '0');
-        const mainSuffix = a.Main_RouteSuffix  ?? '';
-        const crossSuffix= a.Cross_RouteSuffix ?? '';
-        let pmPrefix, pmSuffix, pmMeasureVal, pmRouteId, isCross;
-        if (mainNum === routeNumDigits && mainSuffix === routeSuffix) {
-          isCross      = false;
-          pmPrefix     = a.Main_PMPrefix  ?? '';
-          pmSuffix     = a.Main_PMSuffix  ?? '.';
-          pmMeasureVal = a.Main_PMMeasure ?? '';
-          pmRouteId    = (a.County_Code ?? '.') + mainNum + (a.Main_RouteSuffix ?? '.') + (a.Main_PMPrefix ?? '.') + (a.Main_PMSuffix ?? '.') + (a.Main_PMSuffix === 'L' ? 'L' : (a.Main_Alignment ?? '.'));
-        } else if (crossNum === routeNumDigits && crossSuffix === routeSuffix) {
-          isCross      = true;
-          pmPrefix     = a.Cross_PMPrefix  ?? '';
-          pmSuffix     = a.Cross_PMSuffix  ?? '.';
-          pmMeasureVal = a.Cross_PMMeasure ?? '';
-          pmRouteId    = (a.County_Code ?? '.') + crossNum + (a.Cross_RouteSuffix ?? '.') + (a.Cross_PMPrefix ?? '.') + (a.Cross_PMSuffix ?? '.') + (a.Cross_PMSuffix === 'L' ? 'L' : (a.Cross_Alignment ?? '.'));
-        } else {
-          continue;
-        }
-        detailMap.set(a.INTERSECTION_ID, {
-          desc:      a.Intersection_Name ?? '',
-          county:    a.County_Code       ?? '',
-          district:  a.District_Code ? String(a.District_Code).padStart(2, '0') : '',
-          pmPrefix, pmSuffix, pmMeasure: pmMeasureVal, pmRouteId, isCross
-        });
-      }
-      if (detailMap.size === 0) return { pairs: [], unresolved: [] };
-      const matchedIds  = Array.from(detailMap.keys());
-      const XLATE_CHUNK = 100;
-      const xlateChunks = chunkArray(matchedIds, XLATE_CHUNK);
-      const idToOdMeasure = new Map();
-      await Promise.all(xlateChunks.map(async chunk => {
-        const locs = chunk.map(id => {
-          const d = detailMap.get(id);
-          return { routeId: d.pmRouteId, measure: parseFloat(d.pmMeasure) };
-        });
-        const body = new URLSearchParams({
-          locations:             JSON.stringify(locs),
-          targetNetworkLayerIds: JSON.stringify([5]),
-          ...versionParam(),
-          ...historicMomentParam(),
-          f:     'json',
-          token: _token
-        });
-        const data = await fetch(
-          `${CONFIG.mapServiceUrl}/exts/LRServer/networkLayers/3/translate`,
-          { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString() }
-        ).then(r => r.json()).catch(() => ({ locations: [] }));
-        (data.locations ?? []).forEach((loc, idx) => {
-          const id     = chunk[idx];
-          const xlated = loc.translatedLocations ?? [];
-          const result = xlated.find(r => r.measure != null && r.routeId?.includes(routeNumDigits))
-                      ?? xlated.find(r => r.measure != null)
-                      ?? xlated[0];
-          if (result?.measure != null) idToOdMeasure.set(id, String(result.measure));
-        });
-      }));
-      const pairs      = [];
-      const unresolved = [];
-      for (const id of matchedIds) {
-        const detail    = detailMap.get(id);
-        const measure   = idToMeasure.get(id);
-        const odMeasure = idToOdMeasure.get(id);
-        if (odMeasure == null) {
-          unresolved.push({ id: String(id), desc: detail.desc, pmRouteId: detail.pmRouteId, pmMeasure: detail.pmMeasure });
-          continue;
-        }
-        pairs.push({
-          type:        'intersection',
-          name:        String(id),
-          desc:        detail.desc,
-          routeId:     measure?.routeId ?? '',
-          arMeasure:   measure?.arMeasure ?? 0,
-          odMeasure,
-          county:      detail.county,
-          district:    detail.district,
-          routeSuffix: '',
-          pmPrefix:    detail.pmPrefix,
-          pmSuffix:    detail.pmSuffix,
-          pmMeasure:   detail.pmMeasure,
-          isCross:     detail.isCross,
-          startDate:   null,
-          endDate:     null
-        });
-      }
-      return { pairs, unresolved };
-    } catch (e) {
-      console.error('[_queryIntersections_geometryPath] error:', e.message);
-      return { pairs: [], unresolved: [] };
-    }
   }
 
   /** Queries intersections from layer 151 directly using SQL filters (district/county/route), then resolves geometry via layer 0. */
@@ -1367,7 +1141,7 @@
     }
   }
 
-  // ── HSL: End record query (layers 114 / 85 / 116) ────────────────────────
+  // â”€â”€ HSL: End record query (layers 114 / 85 / 116) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   /**
    * Builds a synthetic END OF DISTRICT / COUNTY / ROUTE record placed after all
@@ -1384,7 +1158,7 @@
     let endDesc = '';
 
     if (district != null) {
-      // ── Layer 114: district boundary events ───────────────────────────────
+      // â”€â”€ Layer 114: district boundary events â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       endDesc = 'END OF DISTRICT';
       const segClauses = segments.map(({ fromBest, toBest }) => {
         const rid   = fromBest.routeId.endsWith('_S') ? fromBest.routeId.slice(0, -2) + '_P' : fromBest.routeId;
@@ -1459,7 +1233,7 @@
       }
 
     } else if (county != null) {
-      // ── Layer 85: county boundary events (county-only, no district) ───────
+      // â”€â”€ Layer 85: county boundary events (county-only, no district) â”€â”€â”€â”€â”€â”€â”€
       endDesc = 'END OF COUNTY';
       const countyCode = normalizeCountyCode(county);
       const segClauses = segments.map(({ fromBest, toBest }) => {
@@ -1500,7 +1274,7 @@
       }
 
     } else {
-      // ── Layer 116: route max AR measure ───────────────────────────────────
+      // â”€â”€ Layer 116: route max AR measure â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       endDesc = 'END OF ROUTE';
       const ridClauses = [...new Set(segments.map(({ fromBest }) => {
         const rid = fromBest.routeId.endsWith('_S') ? fromBest.routeId.slice(0, -2) + '_P' : fromBest.routeId;
@@ -1554,7 +1328,7 @@
       } catch (_) { /* leave blank */ }
     }
 
-    // Translate AR → OD (4→5) and AR → PM (4→3) using lookupMeasure so results
+    // Translate AR â†’ OD (4â†’5) and AR â†’ PM (4â†’3) using lookupMeasure so results
     // land inside the current district/county rather than the adjacent one.
     const loc = { routeId: primaryRouteId, measure: lookupMeasure };
     const makeXlateBody = targetIds => new URLSearchParams({
@@ -1608,7 +1382,7 @@
 
   /**
    * Builds a synthetic "BEGIN ROUTE" record at the first available measure of
-   * the queried segment range. The lookup is translated AR→OD and AR→PM.
+   * the queried segment range. The lookup is translated ARâ†’OD and ARâ†’PM.
    * Returns a raw pair ready to be prepended to allPairs, or null on failure.
    */
   async function hsl_queryBeginRecord(segments, district, county, routeNumDigits) {
@@ -1629,7 +1403,7 @@
     });
 
     if (district != null) {
-      // ── Layer 114: district boundary — minimum FromARMeasure ─────────────
+      // â”€â”€ Layer 114: district boundary â€” minimum FromARMeasure â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       const districtNum = parseInt(district, 10);
       const body = new URLSearchParams({
         where:             `(${segClauses.join(' OR ')}) AND District = ${districtNum}${getDateFilter()}`,
@@ -1655,7 +1429,7 @@
       }
 
       // When a county is also specified, floor the district begin at the county's
-      // min FromARMeasure — the report starts where the district+county overlap begins.
+      // min FromARMeasure â€” the report starts where the district+county overlap begins.
       if (county != null && beginArMeasure != null) {
         const countyCode = normalizeCountyCode(county);
         const where85 = (segClauses.length === 1 ? segClauses[0].slice(1, -1) : `(${segClauses.join(' OR ')})`) + getDateFilter();
@@ -1688,7 +1462,7 @@
       }
 
     } else if (county != null) {
-      // ── Layer 85: county boundary — minimum FromARMeasure (county-only) ──────
+      // â”€â”€ Layer 85: county boundary â€” minimum FromARMeasure (county-only) â”€â”€â”€â”€â”€â”€
       const countyCode = normalizeCountyCode(county);
       const where = segClauses.length === 1
         ? segClauses[0].slice(1, -1)
@@ -1719,7 +1493,7 @@
       }
 
     } else {
-      // ── Layer 116: route — minimum FromARMeasure ──────────────────────────
+      // â”€â”€ Layer 116: route â€” minimum FromARMeasure â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       const ridClauses = [...new Set(segments.map(({ fromBest }) => {
         const rid = fromBest.routeId.endsWith('_S') ? fromBest.routeId.slice(0, -2) + '_P' : fromBest.routeId;
         return `RouteID = '${rid}'`;
@@ -1771,7 +1545,7 @@
       } catch (_) { /* leave blank */ }
     }
 
-    // Translate AR → OD (4→5) and AR → PM (4→3)
+    // Translate AR â†’ OD (4â†’5) and AR â†’ PM (4â†’3)
     const loc = { routeId: primaryRouteId, measure: lookupMeasure };
     const makeXlateBody = targetIds => new URLSearchParams({
       locations:             JSON.stringify([loc]),
@@ -1822,7 +1596,7 @@
     };
   }
 
-  // ── HSL: Run functions ────────────────────────────────────────────────────
+  // â”€â”€ HSL: Run functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   async function hsl_runDistrictRouteMode() {
     if (!tokenIsValid()) { login(); return; }
@@ -2003,7 +1777,7 @@
     }
   }
 
-  // ── HSL: Result pipeline ──────────────────────────────────────────────────
+  // â”€â”€ HSL: Result pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   async function hsl_queryRampDescriptions(allPairs, unresolvedIntersections = [], precomputedHgMap = null) {
     const rampsOnly = allPairs.filter(p => p.type === 'ramp');
@@ -2109,7 +1883,7 @@
       const end   = Math.min(allPairs.length - 1, i + 1 + WINDOW);
       console.group(`[eqLog${label ? ' ' + label : ''}] eq pair @ index ${i}  pairId:${p.eqPairId}`);
       for (let k = start; k <= end; k++) {
-        const marker = k === i ? '► eq1' : k === i + 1 ? '► eq2' : `  [${k}]`;
+        const marker = k === i ? 'â–º eq1' : k === i + 1 ? 'â–º eq2' : `  [${k}]`;
         console.log(marker, fmt(allPairs[k]));
       }
       console.groupEnd();
@@ -2210,6 +1984,8 @@
                    : p.type === 'routebreak'            ? 'hsl-item-rb'
                    : p.type === 'citybegin' ||
                      p.type === 'cityend'   ||
+                     p.type === 'citybreak' ||
+                     p.type === 'cityresume' ||
                      isRealignment ||
                      isIABoundary                       ? 'hsl-item-cb'
                    : p.hwyGroup === 'R'                 ? 'hsl-item-ia-r'
@@ -2217,7 +1993,7 @@
                    : '';
     const hasPmPrefix  = p.pmPrefix && p.pmPrefix !== '.';
     const pmPrefixStyle = hasPmPrefix ? ' color:#991b1b; font-weight:bold;' : '';
-    const eqBlack = (p.type === 'equation' || p.type === 'citybegin' || p.type === 'cityend' || isRealignment || isIABoundary) ? ' style="color:#000;"' : '';
+    const eqBlack = (p.type === 'equation' || p.type === 'citybegin' || p.type === 'cityend' || p.type === 'citybreak' || p.type === 'cityresume' || isRealignment || isIABoundary) ? ' style="color:#000;"' : '';
     return `<li class="ramp-item hsl-ramp-col-template${rowClass ? ' ' + rowClass : ''}">
          <span${eqBlack}>${p.county      ? esc(String(p.county)) : ''}</span>
          <span${eqBlack}>${p.cityCode    ? esc(p.cityCode)        : ''}</span>
@@ -2246,6 +2022,8 @@
                    : p.type === 'routebreak'            ? 'hsl-row-rb'
                    : p.type === 'citybegin' ||
                      p.type === 'cityend'   ||
+                     p.type === 'citybreak' ||
+                     p.type === 'cityresume' ||
                      isRealignment ||
                      isIABoundary                       ? 'hsl-row-cb'
                    : p.hwyGroup === 'R'                 ? 'hsl-row-ia-r'
@@ -2258,7 +2036,7 @@
     const hgColor       = displayedHg === 'R' ? '#1d4ed8' : displayedHg === 'L' ? '#7c3aed' : '';
     const hgFStyle      = hgColor ? ` style="color:${hgColor};"` : '';
     const ftStyle       = hgColor ? ` style="padding-left:3ch; color:${hgColor};"` : ' style="padding-left:3ch"';
-    const eqBlack       = (p.type === 'equation' || p.type === 'citybegin' || p.type === 'cityend' || isRealignment || isIABoundary) ? ' style="color:#000;"' : '';
+    const eqBlack       = (p.type === 'equation' || p.type === 'citybegin' || p.type === 'cityend' || p.type === 'citybreak' || p.type === 'cityresume' || isRealignment || isIABoundary) ? ' style="color:#000;"' : '';
     return `<tr${rowClass ? ` class="${rowClass}"` : ''}>
       <td${eqBlack}>${p.county    ? esc(String(p.county))   : ''}</td>
       <td${eqBlack}>${p.cityCode  ? esc(p.cityCode)         : ''}</td>
@@ -2594,7 +2372,7 @@
       const routeIdMap   = new Map(allPairs.map(p => [p.name, p.routeId   ?? null]));
       const arMeasureMap = new Map(allPairs.map(p => [p.name, p.arMeasure ?? null]));
 
-      // Fetch ramp descriptions (no date filter — refDate already cleared)
+      // Fetch ramp descriptions (no date filter â€” refDate already cleared)
       const rampsOnly = allPairs.filter(p => p.type === 'ramp');
       const descMap = new Map();
       if (rampsOnly.length > 0) {

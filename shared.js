@@ -117,14 +117,12 @@ async function loadCountyCodeDomain() {
    *  133 – Route Breaks (EV_SHS_ROUTE_BREAK; County uses 3-char code)
    *  149 – Intersection AOI (area-of-interest polygon)
    *  151 – Intersection Attributes (County_Code uses 3-char code e.g. 'LA.')
-   *  305 – PM Equation Points (County uses 2-char code e.g. 'LA')
    */
 
   /**
    * Resolves a county name or code to the 3-char code used by layers 123, 132, 133, and 151
    * (e.g., "Los Angeles" → "LA.", "LA" → "LA.", "LA." → "LA.").
    * Returns null when county is falsy.
-   * NOTE: Layer 305 (equation points) uses 2-char codes — do NOT use this helper there.
    */
   function normalizeCountyCode(county) {
     if (!county) return null;
@@ -659,7 +657,7 @@ async function loadCountyCodeDomain() {
       // intersection's PM position, so the diff===0 pmKey tiebreak below never fires.
       // Only applies when the PM key matches; otherwise fall through to normal AR sort.
       if (diff !== 0) {
-        const isCityBoundary = t => t === 'citybegin' || t === 'cityend';
+        const isCityBoundary = t => t === 'citybegin' || t === 'cityend' || t === 'citybreak' || t === 'cityresume';
         const isIorR         = t => t === 'intersection' || t === 'ramp';
         if ((isCityBoundary(a.type) && isIorR(b.type)) || (isCityBoundary(b.type) && isIorR(a.type))) {
           const normKey = p => `${p.pmPrefix === '.' ? '' : (p.pmPrefix ?? '')}|${isNaN(parseFloat(p.pmMeasure)) ? p.pmMeasure : parseFloat(p.pmMeasure).toFixed(3)}|${p.pmSuffix}`;
@@ -692,7 +690,7 @@ async function loadCountyCodeDomain() {
       if (pmKey(a) === pmKey(b)) {
         const ftOf = p => {
           if (p.type === 'equation' || p.type === 'landmark' || p.type === 'routebreak' ||
-              p.type === 'citybegin' || p.type === 'cityend') return 0; // H
+              p.type === 'citybegin' || p.type === 'cityend' || p.type === 'citybreak' || p.type === 'cityresume') return 0; // H
           if (p.type === 'intersection') return 1;                       // I
           return 2;                                                       // R (ramp)
         };
@@ -886,7 +884,7 @@ async function loadCountyCodeDomain() {
       // to the *arriving* PM system and would give the wrong signal if used as
       // pairs[i-1]/pairs[i+2] directly.
       const isHCtx = p => p.type === 'landmark' || p.type === 'routebreak' ||
-                          p.type === 'citybegin' || p.type === 'cityend';
+                          p.type === 'citybegin' || p.type === 'cityend' || p.type === 'citybreak' || p.type === 'cityresume';
       let prevPfx = null;
       for (let k = i - 1; k >= 0; k--) {
         if (!isHCtx(pairs[k])) continue;
