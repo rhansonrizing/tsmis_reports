@@ -1984,8 +1984,6 @@
                    : p.type === 'routebreak'            ? 'hsl-item-rb'
                    : p.type === 'citybegin' ||
                      p.type === 'cityend'   ||
-                     p.type === 'citybreak' ||
-                     p.type === 'cityresume' ||
                      isRealignment ||
                      isIABoundary                       ? 'hsl-item-cb'
                    : p.hwyGroup === 'R'                 ? 'hsl-item-ia-r'
@@ -2022,8 +2020,6 @@
                    : p.type === 'routebreak'            ? 'hsl-row-rb'
                    : p.type === 'citybegin' ||
                      p.type === 'cityend'   ||
-                     p.type === 'citybreak' ||
-                     p.type === 'cityresume' ||
                      isRealignment ||
                      isIABoundary                       ? 'hsl-row-cb'
                    : p.hwyGroup === 'R'                 ? 'hsl-row-ia-r'
