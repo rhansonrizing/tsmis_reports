@@ -43,6 +43,13 @@
     const beginArMeasures = pairs
       .filter(p => isRealignment(p) && p.desc === 'BEGIN REALIGNMENT')
       .map(p => p.arMeasure);
+    // PM keys where an R-alignment version of a realignment landmark exists.
+    // Used to decide whether a non-R version is a true duplicate worth dropping.
+    const realignRPmKeys = new Set(
+      pairs.filter(p => isRealignment(p) && p.alignment === 'R' &&
+                        p.pmMeasure !== '' && p.pmMeasure != null && !isNaN(parseFloat(p.pmMeasure)))
+           .map(pmKey)
+    );
     return pairs.filter(p => {
       if (isIABoundary(p)) {
         if (p.pmMeasure === '' || p.pmMeasure == null || isNaN(parseFloat(p.pmMeasure))) return true;
@@ -55,11 +62,17 @@
       }
       if (!isRealignment(p)) return true;
       const key = pmKey(p);
-      if (p.alignment !== 'R') return false;
+      if (p.alignment !== 'R') {
+        // Only treat this as a duplicate if an R-alignment version actually exists.
+        // If the data only carries an L-alignment version, fall through to the
+        // naturalPmKeys check so the record isn't silently dropped.
+        if (realignRPmKeys.has(key)) return false;
+      }
       if (p.desc === 'END REALIGNMENT' &&
           beginArMeasures.some(ar => Math.abs(ar - p.arMeasure) < 0.001)) return false;
       if (p.pmMeasure === '' || p.pmMeasure == null || isNaN(parseFloat(p.pmMeasure))) return true;
-      return !naturalPmKeys.has(key);
+      if (naturalPmKeys.has(key)) return false;
+      return true;
     });
   }
 
@@ -1628,7 +1641,6 @@
       const hgMap = await queryRangeLayer(unsortedPairs, 116, 'Highway_Group');
       for (const p of unsortedPairs) p.hgValue = hgMap.get(p.name) ?? '';
       const allPairs = fixEqPairOrder(hsl_filterRealignmentLandmarks(hsl_filterCityBoundaries(sortWithIndependentAlignments(unsortedPairs))));
-      hsl_logEqNeighbors(allPairs, 'district/route');
       if (allPairs.length === 0) { hsl_showRampResults('none'); return; }
 
       const lastPair = allPairs[allPairs.length - 1];
@@ -1742,7 +1754,6 @@
       const hgMap = await queryRangeLayer(unsortedPairs, 116, 'Highway_Group');
       for (const p of unsortedPairs) p.hgValue = hgMap.get(p.name) ?? '';
       const allPairs = fixEqPairOrder(hsl_filterRealignmentLandmarks(hsl_filterCityBoundaries(sortWithIndependentAlignments(unsortedPairs))));
-      hsl_logEqNeighbors(allPairs, 'postmile');
       if (allPairs.length === 0) { hsl_showRampResults('none'); return; }
       const lastPair = allPairs[allPairs.length - 1];
       const endPair = (lastPair?.type === 'cityend' || lastPair?.type === 'citybegin') ? null : await hsl_queryEndRecord(segments, null, null, paddedRouteNum);
@@ -1870,24 +1881,6 @@
       };
     });
     hsl_showRampResults('success', null, results, unresolvedIntersections);
-  }
-
-  function hsl_logEqNeighbors(allPairs, label = '') {
-    const fmt = p => `[${p.type}${p.type === 'equation' ? (p.isSecondEq ? '(eq2)' : '(eq1)') : ''}  pfx:${p.pmPrefix ?? ''}  pm:${parseFloat(p.pmMeasure).toFixed(3)}  sfx:${p.pmSuffix ?? ''}  ar:${p.arMeasure}  od:${p.odMeasure}  desc:${p.desc ?? ''}]`;
-    const WINDOW = 3;
-    for (let i = 0; i < allPairs.length; i++) {
-      const p = allPairs[i];
-      if (p.type !== 'equation' || p.isSecondEq) continue;
-      const eq2 = allPairs[i + 1];
-      const start = Math.max(0, i - WINDOW);
-      const end   = Math.min(allPairs.length - 1, i + 1 + WINDOW);
-      console.group(`[eqLog${label ? ' ' + label : ''}] eq pair @ index ${i}  pairId:${p.eqPairId}`);
-      for (let k = start; k <= end; k++) {
-        const marker = k === i ? 'â–º eq1' : k === i + 1 ? 'â–º eq2' : `  [${k}]`;
-        console.log(marker, fmt(allPairs[k]));
-      }
-      console.groupEnd();
-    }
   }
 
   function hsl_showRampResults(type, message, names, unresolvedIntersections = []) {
@@ -2361,7 +2354,6 @@
       const hgMapPre = await queryRangeLayer(unsortedPairs, 116, 'Highway_Group');
       for (const p of unsortedPairs) p.hgValue = hgMapPre.get(p.name) ?? '';
       const allPairs = fixEqPairOrder(hsl_filterRealignmentLandmarks(hsl_filterCityBoundaries(sortWithIndependentAlignments(unsortedPairs))));
-      hsl_logEqNeighbors(allPairs, 'excel');
       if (allPairs.length === 0) return;
 
       // Capture routeId/arMeasure before any merging; default to null so missing entries fail visibly
