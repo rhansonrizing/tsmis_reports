@@ -97,37 +97,34 @@
   // For _S records, both _P and _S RouteIDs are queried — city/HG ranges on L independent
   // alignments may be stored under _S and would be missed if only _P is queried.
   async function queryRangeLayer(pairs, layerNum, fieldName, fromField = 'FromARMeasure', toField = 'ToARMeasure') {
-    const CHUNK = 100;
-    const chunks = chunkArray(pairs, CHUNK);
+    // Build one range query per unique lookup routeId rather than one OR clause
+    // per point. This keeps request count at O(alignments) instead of O(records/100),
+    // avoiding connection bursts on long routes (e.g. All/All/101).
+    const routeRanges = new Map(); // lookupId → { ridS, minAR, maxAR }
+    for (const p of pairs) {
+      if (p.routeId == null) continue;
+      const isUnderscoreS = p.routeId.endsWith('_S');
+      const isPlainS      = !isUnderscoreS && p.routeId.endsWith('S');
+      const isS  = isUnderscoreS || isPlainS;
+      const rid  = isUnderscoreS ? p.routeId.slice(0, -2) + '_P'
+                 : isPlainS      ? p.routeId.slice(0, -1) + 'P'
+                 : p.routeId;
+      const ridS = isS ? p.routeId : null;
+      const m = (layerNum === 116 || layerNum === 74)
+        ? p.arMeasure
+        : ((p.odMeasure !== '' && p.odMeasure != null) ? parseFloat(p.odMeasure) : p.arMeasure);
+      if (m == null || isNaN(m)) continue;
+      if (!routeRanges.has(rid)) routeRanges.set(rid, { ridS, minAR: m, maxAR: m });
+      const entry = routeRanges.get(rid);
+      if (m < entry.minAR) entry.minAR = m;
+      if (m > entry.maxAR) entry.maxAR = m;
+      if (ridS && !entry.ridS) entry.ridS = ridS;
+    }
 
-    const allFeatures = (await Promise.all(chunks.map(async chunk => {
-      const clauseSet = new Set();
-      for (const p of chunk) {
-        // Detect secondary-alignment RouteIDs in both formats:
-        //   _S suffix  — used by segment fromBest.routeId  (e.g. "04MRN0580_S")
-        //   plain S    — used by layer-132 ramp RouteIDs   (e.g. "04MRN0580S")
-        const isUnderscoreS = p.routeId.endsWith('_S');
-        const isPlainS      = !isUnderscoreS && p.routeId.endsWith('S');
-        const isS  = isUnderscoreS || isPlainS;
-        const rid  = isUnderscoreS ? p.routeId.slice(0, -2) + '_P'
-                   : isPlainS      ? p.routeId.slice(0, -1) + 'P'
-                   : p.routeId;
-        const ridS = isS ? p.routeId : null;
-        // Layers 116 (Highway Group) and 74 (City Code) store ranges in AR
-        // coordinates — always use arMeasure so the lookup isn't thrown off by
-        // OD/AR divergence near realignments or junctions (e.g. R-prefix records
-        // whose OD translate lands miles away on the main route).
-        const m = (layerNum === 116 || layerNum === 74)
-          ? p.arMeasure
-          : ((p.odMeasure !== '' && p.odMeasure != null) ? parseFloat(p.odMeasure) : p.arMeasure);
-        clauseSet.add(`(RouteID = '${rid}' AND ${fromField} <= ${m} AND ${toField} >= ${m})`);
-        // For _S / plain-S records also query the S RouteID — city ranges on L
-        // independent alignments are stored against _S and won't appear under _P.
-        if (ridS) clauseSet.add(`(RouteID = '${ridS}' AND ${fromField} <= ${m} AND ${toField} >= ${m})`);
-      }
-      const orClauses = [...clauseSet].join(' OR ');
+    const allFeatures = (await Promise.all([...routeRanges.entries()].map(async ([rid, { ridS, minAR, maxAR }]) => {
+      const routeClause = ridS ? `(RouteID = '${rid}' OR RouteID = '${ridS}')` : `RouteID = '${rid}'`;
       const body = new URLSearchParams({
-        where:          `(${orClauses})${getDateFilter()}`,
+        where:          `${routeClause} AND ${toField} >= ${minAR} AND ${fromField} <= ${maxAR}${getDateFilter()}`,
         outFields:      `RouteID,${fromField},${toField},${fieldName}`,
         returnGeometry: 'false',
         ...versionParam(),
