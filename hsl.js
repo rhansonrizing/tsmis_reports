@@ -2433,7 +2433,7 @@
           pmPrefix:  p.pmPrefix    ?? '',
           pmSuffix:  p.pmSuffix    ?? '.',
           pmMeasure: p.pmMeasure,
-          odMeasure: p.odMeasure   ?? ''
+          odMeasure: odMap.get(p.name) ?? ''
         };
       });
 
@@ -2547,9 +2547,10 @@
       }
 
       let totalAdded = 0, totalErrors = 0;
-      const CHUNK = 500;
+      const CHUNK = 50;
       for (let i = 0; i < adds.length; i += CHUNK) {
         const chunk = adds.slice(i, i + CHUNK);
+        console.log(`[Push to Crash] Inserting records ${i + 1}–${Math.min(i + CHUNK, adds.length)} of ${adds.length}`);
         const body = new URLSearchParams({
           adds:              JSON.stringify(chunk),
           gdbVersion,
@@ -2571,15 +2572,41 @@
           return;
         }
         const addResults = Array.isArray(data.addResults) ? data.addResults : [];
-        totalAdded  += addResults.filter(r => r.success).length;
-        totalErrors += addResults.filter(r => !r.success).length;
+        const chunkAdded  = addResults.filter(r => r.success).length;
+        const chunkErrors = addResults.filter(r => !r.success).length;
+        console.log(`[Push to Crash] Chunk result: ${chunkAdded} added, ${chunkErrors} error(s)`);
+        totalAdded  += chunkAdded;
+        totalErrors += chunkErrors;
         addResults.filter(r => !r.success).forEach((r, idx) => console.error(`[Push to Crash] Row error[${idx}]:`, JSON.stringify(r)));
       }
 
+      // Verify actual record count in the version
+      let verifiedCount = null;
+      try {
+        const verifyResp = await fetch(`${CONFIG.featureServiceUrl}/215/query`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            where:           `routeId IN (${inList})`,
+            returnCountOnly: 'true',
+            gdbVersion,
+            f:               'json',
+            token:           _token
+          }).toString()
+        });
+        const verifyData = await verifyResp.json();
+        if (typeof verifyData.count === 'number') verifiedCount = verifyData.count;
+      } catch (e) {
+        console.warn('[Push to Crash] Verification query failed:', e);
+      }
+
+      const verifyMsg = verifiedCount !== null
+        ? `\nVerified in layer: ${verifiedCount} record(s)`
+        : '\nVerification query failed — check console';
       if (totalErrors > 0) {
-        alert(`Push completed: ${totalAdded} added, ${totalErrors} error(s). Check console for details.`);
+        alert(`Push completed: ${totalAdded} added, ${totalErrors} error(s). Check console for details.${verifyMsg}`);
       } else {
-        alert(`Successfully pushed ${totalAdded} record(s) to layer 215.`);
+        alert(`Successfully pushed ${totalAdded} record(s) to layer 215.${verifyMsg}`);
       }
     } finally {
       refDateEl.value = savedDate;
