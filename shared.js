@@ -1553,7 +1553,8 @@ async function loadCountyCodeDomain() {
     const num = parseFloat(val);
     if (isNaN(num)) return '';
     const [intPart, decPart] = num.toFixed(3).split('.');
-    return intPart.padStart(3, '0') + '.' + decPart;
+    const safeInt = intPart === '-0' ? '0' : intPart;
+    return safeInt.padStart(3, '0') + '.' + decPart;
   }
 
   function esc(str) {
