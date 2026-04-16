@@ -765,24 +765,10 @@ async function loadCountyCodeDomain() {
       }
       return 0;
     });
-    const isIABoundaryRec = p => p.type === 'landmark' && (
-      p.desc === 'BEGIN LEFT INDEPENDENT ALIGNMENT'  || p.desc === 'END LEFT INDEPENDENT ALIGNMENT' ||
-      p.desc === 'BEGIN RIGHT INDEPENDENT ALIGNMENT' || p.desc === 'END RIGHT INDEPENDENT ALIGNMENT'
-    );
-
-    // ── Sort diagnostic logging ──────────────────────────────────────────────
-    // Log every record in main[] so we can verify the sort order going into
-    // the grouping loop.  Filter to records whose pmSuffix is R, L, or E, plus
-    // any dot-suffix records with hgValue R or L — the records most likely to
-    // be mis-grouped.  Remove this block once the sort issue is resolved.
-    const _sortDbg = r => `[${String(r.arMeasure ?? 'null').padEnd(9)}]  type:${(r.type || '').padEnd(12)} sfx:${(r.pmSuffix || '.').padEnd(2)} pfx:${(r.pmPrefix || '.').padEnd(2)} hg:${(r.hgValue || '').padEnd(2)} aln:${(r.alignment || '').padEnd(2)} pm:${String(r.pmMeasure ?? '').padEnd(8)} eq2:${r.isSecondEq ? 'Y' : ' '} | ${r.desc || r.name || ''}`;
-    console.group('[sortWithIndepAlignments] sorted main[] — R/L/E and hgRL records');
-    main.forEach((r, idx) => {
-      const interesting = r.pmSuffix === 'R' || r.pmSuffix === 'L' || r.pmSuffix === 'E' ||
-                          r.hgValue === 'R' || r.hgValue === 'L';
-      if (interesting) console.log(`  [${String(idx).padStart(3)}]`, _sortDbg(r));
-    });
-    console.groupEnd();
+    // Matches any BEGIN/END INDEPENDENT ALIGNMENT landmark regardless of the
+    // exact wording used (data uses many abbreviations: "BEG INDEP ALIGN",
+    // "END INDEP ALIGN LT & RT", "BEGIN INDEP ALIGN - LT", etc.).
+    const isIABoundaryRec = p => p.type === 'landmark' && p.desc && /INDEP/i.test(p.desc);
 
     // Records absorbed by a section's tail scan so the outer loop can skip them.
     const absorbedRecs = new Set();
@@ -793,10 +779,12 @@ async function loadCountyCodeDomain() {
       if (absorbedRecs.has(main[i])) { i++; continue; }
       if ((main[i].pmSuffix === 'R' || main[i].pmSuffix === 'L') && !isIABoundaryRec(main[i])) {
         const j = i;
+        // County of the trigger record — used to prevent records from a different
+        // county's independent alignment from being bundled into this section.
+        const sectionCounty = main[j].county ?? '';
         // Continue through R, L, E, and any dot-record whose hgValue is 'R'
         // or 'L'. pmPrefix is unreliable — some END INDEP ALIGN landmarks
         // carry pmPrefix='.' rather than 'R', so we use hgValue exclusively.
-        console.group(`[sortGroup] section START @ main[${j}]  trigger:`, _sortDbg(main[j]));
         // tailSection collects records absorbed past an eq2 break that belongs
         // to this same independent alignment span.
         const tailSection = [];
@@ -807,7 +795,8 @@ async function loadCountyCodeDomain() {
           // sort position, and consuming them via hgValue bypasses the sfx:E break
           // below, reordering the eq pair to land after the section's L group.
           if (cur.type !== 'equation' && (cur.pmSuffix === 'R' || cur.pmSuffix === 'L' || cur.hgValue === 'R' || cur.hgValue === 'L')) {
-            console.log(`  [${i}] CONSUME (sfx/hg)`, _sortDbg(cur));
+            // Stop if this record belongs to a different county's independent alignment.
+            if (cur.county && sectionCounty && cur.county !== sectionCounty) break;
             i++;
           } else if (cur.pmSuffix === 'E') {
             // Equation records use pmSuffix='E' as a rendering marker, not as an
@@ -839,29 +828,28 @@ async function loadCountyCodeDomain() {
               if (moreRLAhead) {
                 // Tail scan: collect remaining alignment records into tailSection.
                 // eq2 and IA boundary records stay in main[] for the outer loop.
-                console.log(`  [${i}] SKIP    (eq2/sfx=E, R/L remain in span — tail scan from [${peekK}])`, _sortDbg(cur));
                 let k = peekK;
                 while (k < main.length) {
                   const tr = main[k];
                   if (tr.type === 'equation' || isIABoundaryRec(tr)) { k++; continue; }
                   if (tr.type !== 'equation' && (tr.pmSuffix === 'R' || tr.pmSuffix === 'L' ||
                       tr.hgValue === 'R' || tr.hgValue === 'L')) {
-                    console.log(`    tail CONSUME (sfx/hg)`, _sortDbg(tr));
+                    if (tr.county && sectionCounty && tr.county !== sectionCounty) break;
                     tailSection.push(tr); absorbedRecs.add(tr); k++;
                   } else if (tr.pmSuffix === 'E') {
                     if (tr.type === 'equation') { k++; continue; }
-                    console.log(`    tail CONSUME (sfx=E)`, _sortDbg(tr));
                     tailSection.push(tr); absorbedRecs.add(tr); k++;
                     let moreRL2 = false;
                     for (let m = k; m < main.length; m++) {
                       const la = main[m];
                       if (la.type === 'equation' || isIABoundaryRec(la)) continue;
                       if (la.pmSuffix === 'E') break;
+                      if (la.county && sectionCounty && la.county !== sectionCounty) break;
                       if (la.pmSuffix === 'R' || la.pmSuffix === 'L' ||
                           la.hgValue === 'R'  || la.hgValue === 'L') { moreRL2 = true; break; }
                       break;
                     }
-                    if (!moreRL2) { console.log('    tail → no more R/L after E — stop tail'); break; }
+                    if (!moreRL2) break;
                   } else {
                     // Neutral dot record (sfx and hg are both non-R/L). Check if
                     // more R/L alignment records follow; if so, skip over this record
@@ -872,20 +860,18 @@ async function loadCountyCodeDomain() {
                       const la = main[m];
                       if (la.type === 'equation' || isIABoundaryRec(la)) continue;
                       if (la.pmSuffix === 'E') break;
+                      if (la.county && sectionCounty && la.county !== sectionCounty) break;
                       if (la.pmSuffix === 'R' || la.pmSuffix === 'L' ||
                           la.hgValue === 'R'  || la.hgValue === 'L') { moreRL2 = true; break; }
                       break;
                     }
-                    if (moreRL2) { console.log(`    tail SKIP (neutral dot, R/L ahead)`, _sortDbg(tr)); k++; }
-                    else { console.log(`    tail STOP (neutral dot, no R/L ahead)`, _sortDbg(tr)); break; }
+                    if (moreRL2) k++; else break;
                   }
                 }
                 break; // inner loop: eq2 is still at i, outer loop handles it
               }
-              console.log(`  [${i}] BREAK   (eq2/sfx=E, no R/L remain in span)`, _sortDbg(cur));
               break;
             }
-            console.log(`  [${i}] CONSUME (sfx=E)`, _sortDbg(cur));
             i++;
             // Only continue the section past this equation point if R/L records
             // follow before the next E. Stopping at the next E prevents a chain
@@ -894,31 +880,44 @@ async function loadCountyCodeDomain() {
             for (let k = i; k < main.length; k++) {
               const la = main[k];
               if (la.pmSuffix === 'E') break;
+              if (la.county && sectionCounty && la.county !== sectionCounty) break;
               if (la.pmSuffix === 'R' || la.pmSuffix === 'L' || la.hgValue === 'R' || la.hgValue === 'L') {
                 hasMoreRL = true;
                 break;
               }
             }
-            if (!hasMoreRL) { console.log('  → no more R/L after sfx=E — BREAK'); break; }
-            else console.log('  → more R/L ahead after sfx=E — continue');
+            if (!hasMoreRL) break;
           } else {
             // Dot-suffix, non-hgValue record — look ahead for more R/L records
             // before the next E. If found, this record falls between the R and L
             // sub-sections and belongs in the section's trailing bucket.
+            // Stop immediately if the record is an IA boundary (BEGIN/END INDEP ALIGN)
+            // — these mark the edge of the alignment span, not inter-group filler.
+            if (isIABoundaryRec(cur)) break;
+            // Stop immediately if the record's own county differs from the section's
+            // trigger county — independent alignments do not span county boundaries.
+            if (cur.county && sectionCounty && cur.county !== sectionCounty) break;
             let hasMoreRL = false;
             for (let k = i + 1; k < main.length; k++) {
               const la = main[k];
               if (la.pmSuffix === 'E') break; // E marks end of current alignment span
+              if (isIABoundaryRec(la)) break; // IA boundary ends this span
+              if (la.county && sectionCounty && la.county !== sectionCounty) break; // county change
               if (la.pmSuffix === 'R' || la.pmSuffix === 'L' || la.hgValue === 'R' || la.hgValue === 'L') {
+                // A sfx:R record whose desc is "BEGIN REALIGNMENT" is the trigger
+                // for the next section in the outer loop, not a continuation of the
+                // current one (sfx:L "BEGIN REALIGNMENT" records are consumed inside
+                // sections via the sfx/hg path and should not stop the lookahead).
+                // Stop without setting hasMoreRL so this dot record ends the section.
+                if (la.pmSuffix === 'R' && la.type === 'landmark' &&
+                    la.desc && la.desc.includes('BEGIN REALIGNMENT')) break;
                 hasMoreRL = true;
                 break;
               }
             }
             if (hasMoreRL) {
-              console.log(`  [${i}] CONSUME (dot/lookahead R/L found)`, _sortDbg(cur));
               i++;
             } else {
-              console.log(`  [${i}] BREAK   (dot/no R/L ahead)`, _sortDbg(cur));
               break;
             }
           }
@@ -930,13 +929,6 @@ async function loadCountyCodeDomain() {
         const eGroup   = allSec.filter(p => p.pmSuffix === 'E' && p.type !== 'equation');
         const dotGroup = allSec.filter(p => p.pmSuffix !== 'R' && p.pmSuffix !== 'L' && p.pmSuffix !== 'E');
         const rUnconf  = allSec.filter(p => p.pmSuffix === 'R' && p.hgValue !== 'R' && p.alignment !== 'R');
-        console.log(`  section[${j}..${i-1}]+tail(${tailSection.length}) R:${rGroup.length} L:${lGroup.length} E:${eGroup.length} dot:${dotGroup.length} rUnconf:${rUnconf.length}`);
-        if (rGroup.length)   console.log('    R-group:  ', rGroup.map(_sortDbg));
-        if (lGroup.length)   console.log('    L-group:  ', lGroup.map(_sortDbg));
-        if (eGroup.length)   console.log('    E-group:  ', eGroup.map(_sortDbg));
-        if (dotGroup.length) console.log('    dot-group:', dotGroup.map(_sortDbg));
-        if (rUnconf.length)  console.log('    rUnconf:  ', rUnconf.map(_sortDbg));
-        console.groupEnd();
         // R group: only R-suffix records confirmed on the R alignment by hgValue.
         // R-suffix records with empty hgValue are not confirmed as R-alignment and
         // go to the trailing bucket after the L group.
@@ -951,9 +943,7 @@ async function loadCountyCodeDomain() {
         grouped.push(...dotGroup);
         grouped.push(...rUnconf);
       } else {
-        const p = main[i++];
-        console.log(`[sortGroup] else @ [${i-1}]`, _sortDbg(p));
-        grouped.push(p);
+        grouped.push(main[i++]);
       }
     }
 
