@@ -1292,42 +1292,51 @@ async function loadCountyCodeDomain() {
     });
 
 
-    let resp;
-    try {
-      resp = await fetch(`${CONFIG.mapServiceUrl}/132/query`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body:    body.toString()
-      });
-    } catch (e) {
-      console.error('[queryRamps] network error:', e.message);
-      return [];
+    const allFeatures = [];
+    let offset = 0;
+    body.set('resultRecordCount', '1000');
+    while (true) {
+      body.set('resultOffset', String(offset));
+      let resp;
+      try {
+        resp = await fetch(`${CONFIG.mapServiceUrl}/132/query`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body:    body.toString()
+        });
+      } catch (e) {
+        console.error('[queryRamps] network error:', e.message);
+        return [];
+      }
+
+      if (!resp.ok) {
+        console.error('[queryRamps] HTTP', resp.status, resp.statusText);
+        return [];
+      }
+
+      let data;
+      try {
+        data = await resp.json();
+      } catch (e) {
+        console.error('[queryRamps] invalid JSON');
+        return [];
+      }
+
+      if (data.error) {
+        const code = data.error.code;
+        if (code === 498 || code === 499) { _token = null; login(); return []; }
+        console.error(`[queryRamps] API error ${code}: ${data.error.message}`);
+        return [];
+      }
+
+      const page = data.features;
+      if (!Array.isArray(page) || page.length === 0) break;
+      allFeatures.push(...page);
+      if (!data.exceededTransferLimit) break;
+      offset += page.length;
     }
 
-    if (!resp.ok) {
-      console.error('[queryRamps] HTTP', resp.status, resp.statusText);
-      return [];
-    }
-
-    let data;
-    try {
-      data = await resp.json();
-    } catch (e) {
-      console.error('[queryRamps] invalid JSON');
-      return [];
-    }
-
-
-    if (data.error) {
-      const code = data.error.code;
-      if (code === 498 || code === 499) { _token = null; login(); return []; }
-      console.error(`[queryRamps] API error ${code}: ${data.error.message}`);
-      return [];
-    }
-
-    const features = data.features;
-    if (!Array.isArray(features)) return [];
-    if (data.exceededTransferLimit) console.warn('[queryRamps] exceededTransferLimit — results truncated. Narrow the measure range.');
+    const features = allFeatures;
 
     // Build unique pairs keyed by Ramp_Name (keep first occurrence per name)
     const seenNames = new Set();

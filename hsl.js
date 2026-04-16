@@ -1856,6 +1856,7 @@
       return {
         name:        p.name,
         type:        p.type,
+        routeId:     p.routeId   ?? null,
         arMeasure:   p.arMeasure ?? null,
         featureType: p.type === 'equation' ? 'H' : p.type === 'landmark' ? 'H' : p.type === 'routebreak' ? 'H' : p.type === 'citybegin' ? 'H' : p.type === 'cityend' ? 'H' : p.type === 'citybreak' ? 'H' : p.type === 'cityresume' ? 'H' : p.type === 'intersection' ? 'I' : 'R',
         isCross:             p.isCross ?? false,
@@ -2328,118 +2329,17 @@
 
   async function hsl_exportEdit() {
     if (!tokenIsValid()) { login(); return; }
-    if (!_routeLabel) return;
+    if (!_routeLabel || _allResults.length === 0) return;
     const confirmed = await showConfirm(`Confirm update to route ${_routeLabel} in Crash Coding Module`);
     if (!confirmed) return;
     const btn = document.getElementById('hslExportEditBtn');
     btn.disabled = true;
     btn.querySelector('.ptc-label').textContent = 'PUSHING...';
 
-    // Suspend reference date for this query
-    const refDateEl = document.getElementById('refDate');
-    const savedDate = refDateEl.value;
-    refDateEl.value = '';
-
     try {
-      const routeNum = _routeLabel;
-      const { segments, routeSuffix } = buildHslSegments(routeNum);
-      if (segments.length === 0) return;
-
-      const [rampPairs, landmarkPairs, routeBreakPairs, { pairs: intersectionPairs }, equationPairs, cityBeginPairs] = await Promise.all([
-        queryAttributeSet(segments),
-        queryLandmarks(segments, routeSuffix),
-        queryRouteBreaks(segments, routeSuffix),
-        queryIntersections(segments, routeNum),
-        queryEquationPointsFromNetwork(segments, routeNum),
-        queryCityBegins(segments, routeNum)
-      ]);
-
-      const unsortedPairs = [...rampPairs, ...landmarkPairs, ...routeBreakPairs, ...intersectionPairs, ...equationPairs, ...cityBeginPairs];
-      const hgMapPre = await queryRangeLayer(unsortedPairs, 116, 'Highway_Group');
-      for (const p of unsortedPairs) p.hgValue = hgMapPre.get(p.name) ?? '';
-      const allPairs = fixEqPairOrder(hsl_filterRealignmentLandmarks(hsl_filterCityBoundaries(sortWithIndependentAlignments(unsortedPairs))));
-      if (allPairs.length === 0) return;
-
-      // Capture routeId/arMeasure before any merging; default to null so missing entries fail visibly
-      const routeIdMap   = new Map(allPairs.map(p => [p.name, p.routeId   ?? null]));
-      const arMeasureMap = new Map(allPairs.map(p => [p.name, p.arMeasure ?? null]));
-
-      // Fetch ramp descriptions (no date filter â€” refDate already cleared)
-      const rampsOnly = allPairs.filter(p => p.type === 'ramp');
-      const descMap = new Map();
-      if (rampsOnly.length > 0) {
-        const CHUNK = 100;
-        const chunks = chunkArray(rampsOnly, CHUNK);
-        const allDescFeatures = (await Promise.all(chunks.map(async chunk => {
-          const inList = chunk.map(p => `'${p.name.replace(/'/g, "''")}'`).join(', ');
-          const body = new URLSearchParams({
-            where:          `Ramp_Name IN (${inList})`,
-            outFields:      'Ramp_Name,Ramp_Description',
-            returnGeometry: 'false',
-            f:              'json',
-            token:          _token
-          });
-          try {
-            const resp = await fetch(`${CONFIG.mapServiceUrl}/131/query`, {
-              method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString()
-            });
-            const data = await resp.json();
-            return Array.isArray(data.features) ? data.features : [];
-          } catch { return []; }
-        }))).flat();
-        for (const f of allDescFeatures) {
-          const n = f.attributes?.Ramp_Name;
-          if (n != null && !descMap.has(n)) descMap.set(n, f.attributes?.Ramp_Description ?? '');
-        }
-      }
-
-      const [hwyMap, cityMap] = await Promise.all([
-        Promise.resolve(hgMapPre),
-        queryRangeLayer(allPairs, 74,  'City_Code')
-      ]);
-      const odMap = translateToOD(allPairs);
-      const results = allPairs.map((p, i) => {
-        let hwyGroup = hwyMap.get(p.name) ?? '';
-        let cityCode  = (p.type === 'citybegin' || p.type === 'cityend' || p.type === 'citybreak' || p.type === 'cityresume') ? (p.cityCode ?? '') : (cityMap.get(p.name) ?? '');
-        if (p.type === 'routebreak' && p.desc === 'Route Break' && !hwyGroup) {
-          const resume = allPairs.slice(i + 1).find(r => r.type === 'routebreak' && r.desc === 'Route Resume');
-          if (resume) {
-            if (!hwyGroup) hwyGroup = hwyMap.get(resume.name) ?? '';
-          }
-        }
-        return {
-          routeId:     routeIdMap.get(p.name)   ?? null,
-          arMeasure:   arMeasureMap.get(p.name) ?? null,
-          name:        p.name,
-          type:        p.type,
-          featureType: p.type === 'equation' ? 'H' : p.type === 'landmark' ? 'H' : p.type === 'routebreak' ? 'H' : p.type === 'citybegin' ? 'H' : p.type === 'cityend' ? 'H' : p.type === 'citybreak' ? 'H' : p.type === 'cityresume' ? 'H' : p.type === 'intersection' ? 'I' : 'R',
-          isCross:             p.isCross    ?? false,
-          crossRouteFormatted: p.crossRouteFormatted ?? false,
-          hasCrossRoute:       (p.crossRouteFormatted ?? false) || p.crossPmMeasure != null,
-          isSecondEq:          p.isSecondEq ?? false,
-          desc:        (() => {
-            const base = (p.type === 'ramp' ? (descMap.get(p.name) ?? '') : (p.desc ?? '')).toUpperCase();
-            if (p.type === 'intersection' && p.crossPmMeasure != null) {
-              const pm = parseFloat(p.crossPmMeasure);
-              const full = isNaN(pm) ? base : `${base}   [${p.crossRouteLabel ?? 'PM'} ${pm.toFixed(3)}]`;
-              return (p.crossRouteFormatted ?? false) ? `*${full}*` : full;
-            }
-            return (p.crossRouteFormatted ?? false) ? `*${base}*` : base;
-          })(),
-          hwyGroup,
-          cityCode,
-          county:    p.county      ?? '',
-          district:  p.district    ?? '',
-          pmPrefix:  p.pmPrefix    ?? '',
-          pmSuffix:  p.pmSuffix    ?? '.',
-          pmMeasure: p.pmMeasure,
-          odMeasure: odMap.get(p.name) ?? ''
-        };
-      });
-
-      const lengths = hsl_computeLengths(results);
+      const lengths = _hslLengths ?? hsl_computeLengths(_allResults);
       const nowMs = Date.now();
-      const adds = results.map((p, i) => {
+      const adds = _allResults.map((p, i) => {
         const length = lengths[i];
         const rId = p.routeId || '';
         const m = rId.match(/^SHS_(\d+)([^_]*)_([PS])$/);
@@ -2506,19 +2406,25 @@
 
       const gdbVersion = getVersion();
 
-      // Delete existing records for the same routeId(s) before inserting
+      // Scope delete/insert to the AR range covered by this report
+      const arMeasures  = adds.map(a => a.attributes.fromMeasure).filter(v => v != null);
+      const minAR       = Math.min(...arMeasures);
+      const maxAR       = Math.max(...arMeasures);
       const pushRouteIds = [...new Set(adds.map(a => a.attributes.routeId).filter(Boolean))];
-      const inList = pushRouteIds.map(r => `'${r.replace(/'/g, "''")}'`).join(',');
+      const inList      = pushRouteIds.map(r => `'${r.replace(/'/g, "''")}'`).join(',');
+      const rangeWhere  = `routeId IN (${inList}) AND fromMeasure >= ${minAR} AND fromMeasure <= ${maxAR}`;
+
+      // Delete existing records within this AR range before inserting
       const delQuery = await (await fetch(`${CONFIG.featureServiceUrl}/215/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ where: `routeId IN (${inList})`, outFields: 'OBJECTID', returnGeometry: 'false', gdbVersion, f: 'json', token: _token }).toString()
+        body: new URLSearchParams({ where: rangeWhere, returnIdsOnly: 'true', gdbVersion, f: 'json', token: _token }).toString()
       })).json();
       if (delQuery.error) {
         alert(`Query failed (${delQuery.error.code}): ${delQuery.error.message}`);
         return;
       }
-      const existingOids = (delQuery.features || []).map(f => f.attributes.OBJECTID);
+      const existingOids = delQuery.objectIds || [];
       if (existingOids.length > 0) {
         const DEL_CHUNK = 500;
         let totalDeleted = 0;
@@ -2550,7 +2456,6 @@
       const CHUNK = 50;
       for (let i = 0; i < adds.length; i += CHUNK) {
         const chunk = adds.slice(i, i + CHUNK);
-        console.log(`[Push to Crash] Inserting records ${i + 1}–${Math.min(i + CHUNK, adds.length)} of ${adds.length}`);
         const body = new URLSearchParams({
           adds:              JSON.stringify(chunk),
           gdbVersion,
@@ -2572,11 +2477,8 @@
           return;
         }
         const addResults = Array.isArray(data.addResults) ? data.addResults : [];
-        const chunkAdded  = addResults.filter(r => r.success).length;
-        const chunkErrors = addResults.filter(r => !r.success).length;
-        console.log(`[Push to Crash] Chunk result: ${chunkAdded} added, ${chunkErrors} error(s)`);
-        totalAdded  += chunkAdded;
-        totalErrors += chunkErrors;
+        totalAdded  += addResults.filter(r => r.success).length;
+        totalErrors += addResults.filter(r => !r.success).length;
         addResults.filter(r => !r.success).forEach((r, idx) => console.error(`[Push to Crash] Row error[${idx}]:`, JSON.stringify(r)));
       }
 
@@ -2587,7 +2489,7 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: new URLSearchParams({
-            where:           `routeId IN (${inList})`,
+            where:           rangeWhere,
             returnCountOnly: 'true',
             gdbVersion,
             f:               'json',
@@ -2609,7 +2511,6 @@
         alert(`Successfully pushed ${totalAdded} record(s) to layer 215.${verifyMsg}`);
       }
     } finally {
-      refDateEl.value = savedDate;
       btn.disabled = false;
       btn.querySelector('.ptc-label').textContent = 'PUSH TO CRASH';
     }
