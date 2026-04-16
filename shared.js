@@ -1283,7 +1283,7 @@ async function loadCountyCodeDomain() {
     // Layer 132 is a point event layer — use standard feature layer query
     const body = new URLSearchParams({
       where,
-      outFields:      'Ramp_Name,RouteID,ARMeasure,ODMeasure,County,RouteSuffix,PMPrefix,PMSuffix,PMMeasure,District,InventoryItemStartDate,InventoryItemEndDate',
+      outFields:      'Ramp_Name,RouteID,ARMeasure,County,RouteSuffix,PMPrefix,PMSuffix,PMMeasure,District,InventoryItemStartDate,InventoryItemEndDate',
       orderByFields:  'ARMeasure ASC',
       returnGeometry: 'true',
       ...versionParam(),
@@ -1342,7 +1342,7 @@ async function loadCountyCodeDomain() {
           name,
           routeId:     a.RouteID,
           arMeasure:   a.ARMeasure,
-          odMeasure:   a.ODMeasure != null ? String(a.ODMeasure) : '',
+          odMeasure:   '',
           county:      a.County      ?? '',
           routeSuffix: a.RouteSuffix ?? '',
           pmPrefix:    a.PMPrefix    ?? '',

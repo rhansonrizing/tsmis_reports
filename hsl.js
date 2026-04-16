@@ -137,7 +137,7 @@
       : `(${uniqueClauses.join(' OR ')})${suffixFilter}${districtFilter}${countyFilter} AND LRSToDate IS NULL${dateFilter}`;
     const body = new URLSearchParams({
       where,
-      outFields:      'Landmarks_Short,Landmarks_Long,RouteID,ARMeasure,County,RouteSuffix,PMPrefix,PMSuffix,PMMeasure,ODMeasure,District,Alignment,InventoryItemStartDate,InventoryItemEndDate',
+      outFields:      'Landmarks_Short,Landmarks_Long,RouteID,ARMeasure,County,RouteSuffix,PMPrefix,PMSuffix,PMMeasure,District,Alignment,InventoryItemStartDate,InventoryItemEndDate',
       orderByFields:  'ARMeasure ASC',
       returnGeometry: 'false',
       ...versionParam(),
@@ -175,7 +175,7 @@
       // (queryRangeLayer, translateToOD, hsl_queryRampDescriptions) each get a
       // unique slot per landmark even when Landmarks_Short repeats at different
       // physical positions. Display text is driven by pair.desc, not pair.name.
-      const key = `${name}|${a.ODMeasure ?? ''}`;
+      const key = `${name}|${a.ARMeasure ?? ''}`;
       const pair = {
         type:        'landmark',
         name:        key,
@@ -187,7 +187,7 @@
         pmPrefix:    a.PMPrefix    ?? '',
         pmSuffix:    a.PMSuffix    ?? '.',
         pmMeasure:   a.PMMeasure   ?? '',
-        odMeasure:   a.ODMeasure != null ? String(a.ODMeasure) : '',
+        odMeasure:   '',
         district:    a.District != null ? String(a.District).padStart(2, '0') : '',
         alignment:   a.Alignment ?? '',
         startDate:   a.InventoryItemStartDate ?? null,
@@ -259,7 +259,7 @@
       : `(${uniqueClauses.join(' OR ')})${suffixFilter}${districtFilter}${countyFilter} AND LRSToDate IS NULL${dateFilter}`;
     const body = new URLSearchParams({
       where,
-      outFields:      'Route_Break_Type,RouteID,ARMeasure,County,RouteSuffix,PMPrefix,PMSuffix,PMMeasure,ODMeasure,District,InventoryItemStartDate,InventoryItemEndDate',
+      outFields:      'Route_Break_Type,RouteID,ARMeasure,County,RouteSuffix,PMPrefix,PMSuffix,PMMeasure,District,InventoryItemStartDate,InventoryItemEndDate',
       orderByFields:  'ARMeasure ASC',
       returnGeometry: 'false',
       ...versionParam(),
@@ -300,7 +300,7 @@
         pmPrefix:    a.PMPrefix    ?? '',
         pmSuffix:    a.PMSuffix    ?? '.',
         pmMeasure:   a.PMMeasure   ?? '',
-        odMeasure:   a.ODMeasure != null ? String(a.ODMeasure) : '',
+        odMeasure:   '',
         district:    a.District != null ? String(a.District).padStart(2, '0') : '',
         startDate:   a.InventoryItemStartDate ?? null,
         endDate:     a.InventoryItemEndDate   ?? null
@@ -785,7 +785,7 @@
       : `(${uniqueSegClauses.join(' OR ')})${dateFilter}`;
     const body = new URLSearchParams({
       where,
-      outFields:      'RouteID,FromARMeasure,ToARMeasure,City_Code,BeginPMPrefix,BeginPMSuffix,BeginPMMeasure,BeginODMeasure,BeginCounty,EndPMPrefix,EndPMSuffix,EndPMMeasure,EndODMeasure,EndCounty,District',
+      outFields:      'RouteID,FromARMeasure,ToARMeasure,City_Code,BeginPMPrefix,BeginPMSuffix,BeginPMMeasure,BeginCounty,EndPMPrefix,EndPMSuffix,EndPMMeasure,EndCounty,District',
       returnGeometry: 'false',
       ...versionParam(),
       f:              'json',
@@ -838,7 +838,7 @@
           pmPrefix:    a.BeginPMPrefix  ?? '',
           pmSuffix:    a.BeginPMSuffix  ?? '.',
           pmMeasure:   a.BeginPMMeasure != null ? String(a.BeginPMMeasure) : '',
-          odMeasure:   a.BeginODMeasure != null ? String(a.BeginODMeasure) : '',
+          odMeasure:   '',
           district:    fmtDistrict(a),
           cityCode,
           startDate:   null,
@@ -855,7 +855,7 @@
           pmPrefix:    a.EndPMPrefix  ?? '',
           pmSuffix:    a.EndPMSuffix  ?? '.',
           pmMeasure:   a.EndPMMeasure != null ? String(a.EndPMMeasure) : '',
-          odMeasure:   a.EndODMeasure != null ? String(a.EndODMeasure) : '',
+          odMeasure:   '',
           district:    fmtDistrict(a),
           cityCode,
           startDate:   null,

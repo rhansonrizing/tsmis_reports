@@ -256,7 +256,7 @@
       : `(${uniqueClauses.join(' OR ')})${suffixFilter}${districtFilter}${countyFilter} AND LRSToDate IS NULL${dateFilter}`;
     const body = new URLSearchParams({
       where,
-      outFields:      'Ramp_Name,RouteID,ARMeasure,County,RouteSuffix,PMPrefix,PMSuffix,PMMeasure,ODMeasure,District,InventoryItemStartDate,InventoryItemEndDate',
+      outFields:      'Ramp_Name,RouteID,ARMeasure,County,RouteSuffix,PMPrefix,PMSuffix,PMMeasure,District,InventoryItemStartDate,InventoryItemEndDate',
       orderByFields:  'ARMeasure ASC',
       returnGeometry: 'false',
       ...versionParam(),
@@ -295,17 +295,17 @@
         pmPrefix:    a.PMPrefix    ?? '',
         pmSuffix:    a.PMSuffix    ?? '.',
         pmMeasure:   a.PMMeasure   ?? '',
-        odMeasure:   a.ODMeasure != null ? String(a.ODMeasure) : '',
+        odMeasure:   '',
         district:    a.District != null ? String(a.District).padStart(2, '0') : '',
         startDate:   a.InventoryItemStartDate ?? null,
         endDate:     a.InventoryItemEndDate   ?? null
       };
     });
-    const missing = pairs.filter(p => p.odMeasure === '' && p.routeId && p.arMeasure != null);
-    if (missing.length > 0) {
+    const toTranslate = pairs.filter(p => p.routeId && p.arMeasure != null);
+    if (toTranslate.length > 0) {
       const CHUNK = 200;
       const chunks = [];
-      for (let i = 0; i < missing.length; i += CHUNK) chunks.push(missing.slice(i, i + CHUNK));
+      for (let i = 0; i < toTranslate.length; i += CHUNK) chunks.push(toTranslate.slice(i, i + CHUNK));
       await Promise.all(chunks.map(async chunk => {
         const locs = chunk.map(p => ({ routeId: p.routeId, measure: p.arMeasure }));
         const xlateBody = new URLSearchParams({
