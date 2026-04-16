@@ -324,7 +324,13 @@ NaN AR values are treated as `Infinity`.
 
 #### Step 3 — Group independent alignment sections (R before L)
 
-The outer loop triggers a section when it sees an R or L pmSuffix record **that is not an IA boundary landmark** (BEGIN/END LEFT/RIGHT INDEPENDENT ALIGNMENT). Those boundary landmarks pass through the `else` branch individually at their natural AR position.
+`isIABoundaryRec` identifies BEGIN/END INDEPENDENT ALIGNMENT landmark records using a pattern match:
+```javascript
+const isIABoundaryRec = p => p.type === 'landmark' && p.desc && /INDEP/i.test(p.desc);
+```
+This catches all abbreviations used in the data ("BEG INDEP ALIGN", "END INDEP ALIGN LT & RT", "BEGIN INDEP ALIGN - LT", etc.). REALIGNMENT records ("BEGIN REALIGNMENT", "END REALIGNMENT") are intentionally **not** matched here — they still trigger sections via the outer loop like any other sfx:R/L record.
+
+The outer loop triggers a section when it sees an R or L pmSuffix record **that is not an IA boundary landmark**. Those boundary landmarks pass through the `else` branch individually at their natural AR position.
 
 ```javascript
 if ((main[i].pmSuffix === 'R' || main[i].pmSuffix === 'L') && !isIABoundaryRec(main[i])) {
@@ -334,9 +340,12 @@ if ((main[i].pmSuffix === 'R' || main[i].pmSuffix === 'L') && !isIABoundaryRec(m
 }
 ```
 
-The inner loop that consumes the section has two critical guards:
+The inner loop that consumes the section has these critical guards:
 1. **Equation records are never consumed by `hgValue`** — their HG reflects the alignment at their calibration-derived AR, not their logical position. Consuming them via `hgValue` would pull eq2 into the section and reorder it after the L group.
 2. **eq2 records with `pmSuffix='E'` break the inner loop** — eq2 uses `sfx:E` as a rendering marker, not as an alignment boundary.
+3. **County guard on sfx/hg consume path** — if a record's county differs from the section-trigger county (`sectionCounty`), the loop breaks. Prevents cross-county bundling (e.g. MNO records being consumed into an INY section).
+4. **IA boundary records break the dot-else path** — when the inner loop reaches an `isIABoundaryRec` record on the neutral dot path, it breaks immediately rather than consuming it.
+5. **Dot-else lookahead stops at IA boundaries and sfx:R BEGIN REALIGNMENT** — the forward scan that decides whether to consume a neutral dot record stops if it sees an `isIABoundaryRec` record (no R/L remaining in this span) or a sfx:R "BEGIN REALIGNMENT" landmark (that record is the next section trigger, not a continuation). Note: sfx:L "BEGIN REALIGNMENT" does NOT stop the lookahead — L realignment markers can legitimately appear inside sections.
 
 Section output order:
 1. R group: `pmSuffix === 'R'` records confirmed by `hgValue === 'R'` or `alignment === 'R'`
@@ -377,12 +386,24 @@ hsl_filterRealignmentLandmarks(filtered)
 allPairs — final ordered list passed to hsl_renderPage()
 ```
 
-### pmKey Definition (used by both filter functions)
+### pmKey Definitions
+
+**`sortWithIndependentAlignments` / `hsl_filterCityBoundaries`** (suffix included, no county):
 ```javascript
-// '.' and '' are normalized to '' (no prefix)
 const normPfx = p => (p.pmPrefix === '.' ? '' : (p.pmPrefix ?? ''));
 const pmKey = p => `${normPfx(p)}|${parseFloat(p.pmMeasure).toFixed(3)}|${p.pmSuffix}`;
 // e.g., "R|0.000|R"  or  "C|0.000|."
+```
+
+**`hsl_filterRealignmentLandmarks`** (county included, suffix excluded):
+```javascript
+const normPfx = p => (p.pmPrefix === '.' ? '' : (p.pmPrefix ?? ''));
+const pmKey = p => `${p.county ?? ''}|${normPfx(p)}|${parseFloat(p.pmMeasure).toFixed(3)}`;
+// e.g., "MNO|R|0.000"  or  "INY||3.049"
+// County is included to prevent a natural H record in one county (e.g. KERN/INYO CO LINE
+// at pfx:R pm:0 in INY) from suppressing a realignment in a different county
+// (e.g. MNO BEGIN REALIGNMENT at pfx:R pm:0). Suffix is excluded because equation
+// points carry pmSuffix 'E' while co-located realignment landmarks carry '.'.
 ```
 
 ### Visual Result
