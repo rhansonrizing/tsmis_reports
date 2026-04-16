@@ -23,11 +23,14 @@
        p.desc === 'BEGIN RIGHT INDEPENDENT ALIGNMENT' || p.desc === 'END RIGHT INDEPENDENT ALIGNMENT');
     // Suffix is intentionally excluded: equation points carry pmSuffix 'E' while
     // realignment landmarks at the same location carry '.', so a suffix-aware key
-    // would miss the match. Prefix + measure is sufficient to identify the same PM point.
-    // pmPrefix '.' and '' are both "no prefix" â€” normalize to '' so IA boundary records
+    // would miss the match. County + prefix + measure is sufficient to identify the
+    // same PM point. County is included to prevent a natural H record in one county
+    // (e.g. KERN/INYO CO LINE at pfx:R pm:0) from suppressing a realignment record
+    // in a different county (e.g. MNO BEGIN REALIGNMENT at pfx:R pm:0).
+    // pmPrefix '.' and '' are both “no prefix” — normalize to '' so IA boundary records
     // (which store '' after stripping '.') match H records that store '.' literally.
     const normPfx = p => (p.pmPrefix === '.' ? '' : (p.pmPrefix ?? ''));
-    const pmKey = p => `${normPfx(p)}|${parseFloat(p.pmMeasure).toFixed(3)}`;
+    const pmKey = p => `${p.county ?? ''}|${normPfx(p)}|${parseFloat(p.pmMeasure).toFixed(3)}`;
     const isNaturalH = p => !isRealignment(p) && !isIABoundary(p) && p.type !== 'intersection' && p.type !== 'ramp';
     const naturalPmKeys = new Set(
       pairs
@@ -304,12 +307,13 @@
       };
     });
 
-    // For any route break missing an OD measure, translate AR â†’ OD to fill it in.
-    const missing = pairs.filter(p => p.odMeasure === '' && p.routeId && p.arMeasure != null);
-    if (missing.length > 0) {
+    // Translate AR â†’ OD for all route breaks so OD reflects the reference-date
+    // network state rather than the stored ODMeasure (which can drift out of sync).
+    const toTranslate = pairs.filter(p => p.routeId && p.arMeasure != null);
+    if (toTranslate.length > 0) {
       const CHUNK = 200;
       const chunks = [];
-      for (let i = 0; i < missing.length; i += CHUNK) chunks.push(missing.slice(i, i + CHUNK));
+      for (let i = 0; i < toTranslate.length; i += CHUNK) chunks.push(toTranslate.slice(i, i + CHUNK));
       await Promise.all(chunks.map(async chunk => {
         const locs = chunk.map(p => ({ routeId: p.routeId, measure: p.arMeasure }));
         const xlateBody = new URLSearchParams({
