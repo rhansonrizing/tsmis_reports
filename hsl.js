@@ -818,7 +818,7 @@
     const pairs = features.flatMap(f => {
       const a        = f.attributes ?? {};
       const cityCode = a.City_Code ?? '';
-      // Skip city begin/end when they fall on an L independent alignment â€”
+      // Skip city begin/end when they fall on an L independent alignment —
       // the city boundary was already crossed on the main alignment before the split.
       const beginSuffix = a.BeginPMSuffix ?? '.';
       const endSuffix   = a.EndPMSuffix   ?? '.';
