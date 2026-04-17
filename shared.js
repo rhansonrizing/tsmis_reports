@@ -812,11 +812,19 @@ async function loadCountyCodeDomain() {
               // are co-located with eq2 (same rounded AR). Sorting places eq2 first at
               // a given AR, pushing co-located R/L records to higher indices; those
               // records must not block detection of the remaining alignment records.
+              // Dot-suffix IA boundaries seen during the peek (e.g. END INDEP ALIGN - RT)
+              // are collected so they can be absorbed into the section's dotGroup output,
+              // ensuring they appear before the equation pair rather than after it.
               let peekK = i + 1;
               const eq2Ar3dp = Math.round(cur.arMeasure * 1000);
+              const peekedIABounds = [];
               while (peekK < main.length) {
                 const pk = main[peekK];
-                if (pk.type === 'equation' || isIABoundaryRec(pk)) { peekK++; continue; }
+                if (pk.type === 'equation') { peekK++; continue; }
+                if (isIABoundaryRec(pk)) {
+                  if (pk.pmSuffix !== 'R' && pk.pmSuffix !== 'L') peekedIABounds.push(pk);
+                  peekK++; continue;
+                }
                 if (Math.round(pk.arMeasure * 1000) === eq2Ar3dp &&
                     pk.pmSuffix !== 'R' && pk.pmSuffix !== 'L' &&
                     pk.hgValue !== 'R'  && pk.hgValue !== 'L') { peekK++; continue; }
@@ -826,12 +834,24 @@ async function loadCountyCodeDomain() {
                 (main[peekK].pmSuffix === 'R' || main[peekK].pmSuffix === 'L' ||
                  main[peekK].hgValue === 'R'  || main[peekK].hgValue === 'L');
               if (moreRLAhead) {
+                // Absorb dot-suffix IA boundaries collected during the peek (e.g.
+                // END INDEP ALIGN - RT) into the section so they land in dotGroup
+                // output, before the equation pair rather than after it.
+                for (const pk of peekedIABounds) { tailSection.push(pk); absorbedRecs.add(pk); }
                 // Tail scan: collect remaining alignment records into tailSection.
-                // eq2 and IA boundary records stay in main[] for the outer loop.
+                // eq2 and R/L-suffix IA boundary records stay in main[] for the outer loop.
                 let k = peekK;
                 while (k < main.length) {
                   const tr = main[k];
-                  if (tr.type === 'equation' || isIABoundaryRec(tr)) { k++; continue; }
+                  if (tr.type === 'equation') { k++; continue; }
+                  if (isIABoundaryRec(tr)) {
+                    // Absorb dot-suffix IA boundaries (e.g. END INDEP ALIGN - LT) into
+                    // the section dotGroup; leave R/L-suffix ones for the outer loop.
+                    if (tr.pmSuffix !== 'R' && tr.pmSuffix !== 'L') {
+                      tailSection.push(tr); absorbedRecs.add(tr);
+                    }
+                    k++; continue;
+                  }
                   if (tr.type !== 'equation' && (tr.pmSuffix === 'R' || tr.pmSuffix === 'L' ||
                       tr.hgValue === 'R' || tr.hgValue === 'L')) {
                     if (tr.county && sectionCounty && tr.county !== sectionCounty) break;
@@ -924,10 +944,14 @@ async function loadCountyCodeDomain() {
         }
         const section = main.slice(j, i);
         const allSec  = [...section, ...tailSection];
-        const rGroup   = allSec.filter(p => p.pmSuffix === 'R' && (p.hgValue === 'R' || p.alignment === 'R'));
-        const lGroup   = allSec.filter(p => p.pmSuffix === 'L');
+        // IA boundary records (e.g. "END INDEP ALIGN - RT/LT") have sfx='.' but
+        // belong with their respective alignment group when absorbed into a section.
+        const isRtIA = p => isIABoundaryRec(p) && /\bRT\b/i.test(p.desc) && !/\bLT\b/i.test(p.desc);
+        const isLtIA = p => isIABoundaryRec(p) && /\bLT\b/i.test(p.desc) && !/\bRT\b/i.test(p.desc);
+        const rGroup   = allSec.filter(p => (p.pmSuffix === 'R' && (p.hgValue === 'R' || p.alignment === 'R')) || isRtIA(p));
+        const lGroup   = allSec.filter(p => p.pmSuffix === 'L' || isLtIA(p));
         const eGroup   = allSec.filter(p => p.pmSuffix === 'E' && p.type !== 'equation');
-        const dotGroup = allSec.filter(p => p.pmSuffix !== 'R' && p.pmSuffix !== 'L' && p.pmSuffix !== 'E');
+        const dotGroup = allSec.filter(p => p.pmSuffix !== 'R' && p.pmSuffix !== 'L' && p.pmSuffix !== 'E' && !isRtIA(p) && !isLtIA(p));
         const rUnconf  = allSec.filter(p => p.pmSuffix === 'R' && p.hgValue !== 'R' && p.alignment !== 'R');
         // R group: only R-suffix records confirmed on the R alignment by hgValue.
         // R-suffix records with empty hgValue are not confirmed as R-alignment and

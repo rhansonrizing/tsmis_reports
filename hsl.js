@@ -91,19 +91,10 @@
 
     const filtered = pairs.filter(p => {
       if (!isBoundaryType(p.type)) return true;
-      if (p.arMeasure != null && !isNaN(p.arMeasure) && (p.arMeasure < minAR - 0.005 || p.arMeasure > maxAR + 0.005)) {
-        console.log(`[filterBoundaries] DROP ${p.type} ${p.name} arMeasure=${p.arMeasure} outside [${minAR},${maxAR}]`);
-        return false;
-      }
-      if (p.odMeasure !== '' && p.odMeasure != null && parseFloat(p.odMeasure) < 0) {
-        console.log(`[filterBoundaries] DROP ${p.type} ${p.name} odMeasure=${p.odMeasure} < 0`);
-        return false;
-      }
+      if (p.arMeasure != null && !isNaN(p.arMeasure) && (p.arMeasure < minAR - 0.005 || p.arMeasure > maxAR + 0.005)) return false;
+      if (p.odMeasure !== '' && p.odMeasure != null && parseFloat(p.odMeasure) < 0) return false;
       const pmVal = parseFloat(p.pmMeasure);
-      if (!isNaN(pmVal) && pmVal < -0.001) {
-        console.log(`[filterBoundaries] DROP ${p.type} ${p.name} pmMeasure=${p.pmMeasure} < 0`);
-        return false;
-      }
+      if (!isNaN(pmVal) && pmVal < -0.001) return false;
       return true;
     });
 
@@ -113,7 +104,6 @@
     return filtered.filter(p => {
       if (p.type !== 'countyend') return true;
       if (countyCodesWithBegin.has(p.county)) return true;
-      console.log(`[filterBoundaries] DROP orphaned ${p.type} ${p.name} county=${p.county} (no begin in range)`);
       return false;
     });
   }
@@ -988,7 +978,7 @@
 
   /** Returns synthetic “COUNTY BEGIN/END” records from layer 85 field County_Code.
    *  Only queries _P routes — county boundaries on L independent alignments are excluded. */
-  async function queryCountyBegins(segments, routeNumDigits) {
+  async function queryCountyBegins(segments, routeNumDigits, county = null) {
     const segClauses = segments.map(({ fromBest, toBest }) => {
       const rid   = fromBest.routeId.endsWith('_S') ? fromBest.routeId.slice(0, -2) + '_P' : fromBest.routeId;
       const fromM = Math.min(fromBest.measure, toBest.measure) - 0.005;
@@ -1000,7 +990,6 @@
     const where = uniqueSegClauses.length === 1
       ? uniqueSegClauses[0].slice(1, -1) + dateFilter
       : `(${uniqueSegClauses.join(' OR ')})${dateFilter}`;
-    console.log('[queryCountyBegins] where:', where);
     const body = new URLSearchParams({
       where,
       outFields:      'RouteID,FromARMeasure,ToARMeasure,County_Code',
@@ -1025,7 +1014,6 @@
       console.error(`[queryCountyBegins] API error ${code}: ${data.error.message}`);
       return [];
     }
-    console.log('[queryCountyBegins] raw features:', (data.features ?? []).map(f => f.attributes));
     // Deduplicate by RouteID + FromARMeasure
     const seen = new Set();
     const features = (data.features ?? []).filter(f => {
@@ -1035,9 +1023,9 @@
       seen.add(key);
       return true;
     });
-    if (features.length === 0) { console.log('[queryCountyBegins] no features after dedup'); return []; }
+    if (features.length === 0) return [];
 
-    const pairs = features.flatMap(f => {
+    let pairs = features.flatMap(f => {
       const a          = f.attributes ?? {};
       const countyCode = a.County_Code != null ? String(a.County_Code) : '';
       return [
@@ -1122,6 +1110,16 @@
         }
       });
     }));
+
+    // If a county filter is active, exclude records for other counties.
+    if (county != null) {
+      const normalizedCounty = normalizeCountyCode(county);
+      if (normalizedCounty) {
+        const before = pairs.length;
+        pairs = pairs.filter(p => p.county === normalizedCounty);
+        // filtered;
+      }
+    }
 
     // Keep only the min-AR countybegin and max-AR countyend per county code.
     // Data gaps in layer 85 can produce multiple non-contiguous segments for the same county;
@@ -1810,7 +1808,7 @@
         queryIntersections(segments, routeNum, district, county),
         queryEquationPointsFromNetwork(segments, paddedRoute, district, county),
         queryCityBegins(segments, paddedRoute, district, county),
-        queryCountyBegins(segments, paddedRoute),
+        queryCountyBegins(segments, paddedRoute, county),
         queryIndependentAlignmentBoundaries(segments, paddedRoute, county),
         queryRouteDirection(routeNum)
       ]);
@@ -2018,10 +2016,20 @@
     const odMap = translateToOD(allPairs);
     const results = allPairs.map((p, i) => {
       let hwyGroup = hwyMap.get(p.name) ?? '';
-      if (p.type === 'landmark' &&
-          (p.desc === 'BEGIN LEFT INDEPENDENT ALIGNMENT'  || p.desc === 'END LEFT INDEPENDENT ALIGNMENT' ||
-           p.desc === 'BEGIN RIGHT INDEPENDENT ALIGNMENT' || p.desc === 'END RIGHT INDEPENDENT ALIGNMENT')) {
-        hwyGroup = p.alignment ?? '';
+      if (p.type === 'landmark' && p.desc && /INDEP/i.test(p.desc)) {
+        if (p.desc === 'BEGIN LEFT INDEPENDENT ALIGNMENT'  || p.desc === 'END LEFT INDEPENDENT ALIGNMENT' ||
+            p.desc === 'BEGIN RIGHT INDEPENDENT ALIGNMENT' || p.desc === 'END RIGHT INDEPENDENT ALIGNMENT') {
+          // Full-name variants: alignment field is reliable (record is on the R/L route).
+          hwyGroup = p.alignment ?? '';
+        } else {
+          // Abbreviated variants (e.g. "END INDEP ALIGN - RT", "END INDEP ALIGN RT LNS"):
+          // layer 116 may return D once the R ind alignment ends, so derive from desc.
+          const hasRT = /\bRT\b/i.test(p.desc);
+          const hasLT = /\bLT\b/i.test(p.desc);
+          if      (hasRT && !hasLT) hwyGroup = 'R';
+          else if (hasLT && !hasRT) hwyGroup = 'L';
+          // Both RT & LT (e.g. "END INDEP ALIGN LT & RT") or neither: keep layer 116 value.
+        }
       }
       if (p.type === 'countybegin' || p.type === 'countyend') {
         if (p.pmSuffix === 'R') hwyGroup = 'R';
