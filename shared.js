@@ -319,16 +319,16 @@ async function loadCountyCodeDomain() {
     // If county placeholder still selected, leave route disabled
     if (countySel.options[countySel.selectedIndex]?.disabled) return;
 
-    const whereClause = district && county
-      ? `District_Code = ${parseInt(district, 10)} AND County = '${county.replace(/'/g, "''")}'`
-      : district
-        ? `District_Code = ${parseInt(district, 10)}`
-        : county
-          ? `County = '${county.replace(/'/g, "''")}'`
-          : '1=1';
+    // Query layer 123 (Landmarks) for distinct route numbers — it uses the same
+    // District and County fields as all other event layers, so district+county
+    // filtering is accurate without needing a cross-check against a separate index.
+    const resolvedCounty  = normalizeCountyCode(county);
+    const districtFilter  = district     ? ` AND District = ${parseInt(district, 10)}` : '';
+    const countyFilter    = resolvedCounty ? ` AND County = '${resolvedCounty.replace(/'/g, "''")}'` : '';
+    const where = `(RouteSuffix IS NULL OR RouteSuffix <> 'S')${districtFilter}${countyFilter} AND LRSToDate IS NULL`;
 
-    const params = new URLSearchParams({
-      where:                whereClause,
+    const body = new URLSearchParams({
+      where,
       outFields:            'RouteNum,RouteSuffix',
       returnDistinctValues: 'true',
       returnGeometry:       'false',
@@ -339,10 +339,21 @@ async function loadCountyCodeDomain() {
     });
     let data;
     try {
-      const resp = await fetch(`${CONFIG.featureServiceUrl}/215/query?${params}`);
+      const resp = await fetch(`${CONFIG.mapServiceUrl}/123/query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString()
+      });
       data = await resp.json();
     } catch (e) {
       console.warn('[onCountyChange] fetch error:', e.message);
+      routeSel.innerHTML = '<option value="" disabled hidden>-- Error loading routes --</option>';
+      return;
+    }
+    if (data.error) {
+      const code = data.error.code;
+      if (code === 498 || code === 499) { _token = null; login(); return; }
+      console.warn('[onCountyChange] layer 123 error:', data.error.code, data.error.message);
       routeSel.innerHTML = '<option value="" disabled hidden>-- Error loading routes --</option>';
       return;
     }

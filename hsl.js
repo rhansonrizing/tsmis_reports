@@ -809,11 +809,15 @@
     const uniqueSegClauses = [...new Set(segClauses)];
     // Layer 74 is filtered by RouteID + measure range only. Although it has BeginCounty/
     // EndCounty fields, a city range can span a county boundary so we cannot filter by county
-    // in the WHERE clause â€” the county filter is applied post-translation below.
-    const dateFilter = getDateFilter();
-    const where = uniqueSegClauses.length === 1
-      ? uniqueSegClauses[0].slice(1, -1) + dateFilter
-      : `(${uniqueSegClauses.join(' OR ')})${dateFilter}`;
+    // in the WHERE clause — the county filter is applied post-translation below.
+    // District IS filterable in the WHERE clause since it is a single attribute of the
+    // city range feature (not derived from endpoints that may cross a boundary).
+    const dateFilter    = getDateFilter();
+    const districtClause = district != null ? ` AND District = ${parseInt(district, 10)}` : '';
+    const baseClause = uniqueSegClauses.length === 1
+      ? uniqueSegClauses[0].slice(1, -1)
+      : `(${uniqueSegClauses.join(' OR ')})`;
+    const where = baseClause + districtClause + dateFilter;
     const body = new URLSearchParams({
       where,
       outFields:      'RouteID,FromARMeasure,ToARMeasure,City_Code,BeginPMPrefix,BeginPMSuffix,BeginPMMeasure,BeginCounty,EndPMPrefix,EndPMSuffix,EndPMMeasure,EndCounty,District',
@@ -941,15 +945,22 @@
 
     // Layer 74 has no county column usable in the WHERE clause, so filter here
     // after translation has set p.county from the PM routeId (rid.slice(0,3)).
+    // Similarly, district is filtered post-query because a city range can span a
+    // district boundary — the District attribute reflects where the range is stored,
+    // so records with a different district than requested are excluded here.
+    let filtered = pairs;
     if (county != null) {
       const normalizedCounty = normalizeCountyCode(county);
       if (normalizedCounty) {
-        const filtered = pairs.filter(p => !p.county || p.county === normalizedCounty);
-        return hsl_deduplicateCitySegments(filtered);
+        filtered = filtered.filter(p => !p.county || p.county === normalizedCounty);
       }
     }
+    if (district != null) {
+      const districtStr = String(parseInt(district, 10)).padStart(2, '0');
+      filtered = filtered.filter(p => !p.district || p.district === districtStr);
+    }
 
-    return hsl_deduplicateCitySegments(pairs);
+    return hsl_deduplicateCitySegments(filtered);
   }
 
   /**
@@ -1116,7 +1127,9 @@
       (pmData.locations ?? []).forEach((loc, idx) => {
         const xlated = loc.translatedLocations ?? [];
         const countyPrefix = chunk[idx].county?.toUpperCase();
-        const result = xlated.find(r => r.measure != null && countyPrefix && r.routeId?.slice(0, 3).toUpperCase() === countyPrefix && r.routeId?.[8] !== 'L')
+        const result = xlated.find(r => r.measure != null && countyPrefix && r.routeId?.slice(0, 3).toUpperCase() === countyPrefix && routeNumDigits && r.routeId?.includes(routeNumDigits) && r.routeId?.[8] !== 'L')
+                    ?? xlated.find(r => r.measure != null && countyPrefix && r.routeId?.slice(0, 3).toUpperCase() === countyPrefix && routeNumDigits && r.routeId?.includes(routeNumDigits))
+                    ?? xlated.find(r => r.measure != null && countyPrefix && r.routeId?.slice(0, 3).toUpperCase() === countyPrefix && r.routeId?.[8] !== 'L')
                     ?? xlated.find(r => r.measure != null && countyPrefix && r.routeId?.slice(0, 3).toUpperCase() === countyPrefix)
                     ?? xlated.find(r => r.measure != null && routeNumDigits && r.routeId?.includes(routeNumDigits))
                     ?? xlated.find(r => r.measure != null)
@@ -1367,6 +1380,26 @@
     let endArMeasure = null;
     let endDesc = '';
 
+    // Always fetch the route's true max AR from layer 116 in parallel — used both
+    // for the route-only case and to detect when a district/county boundary coincides
+    // with the actual end of the route (so the label can be promoted to END OF ROUTE).
+    const ridClauses116 = [...new Set(segments.map(({ fromBest }) => {
+      const rid = fromBest.routeId.endsWith('_S') ? fromBest.routeId.slice(0, -2) + '_P' : fromBest.routeId;
+      return `RouteID = '${rid}'`;
+    }))];
+    const routeEndPromise = fetch(`${CONFIG.mapServiceUrl}/116/query`, {
+      method: 'POST', headers,
+      body: new URLSearchParams({
+        where:             `(${ridClauses116.join(' OR ')})${getDateFilter()}`,
+        outFields:         'RouteID,ToARMeasure',
+        returnGeometry:    'false',
+        orderByFields:     'ToARMeasure DESC',
+        resultRecordCount: '1',
+        ...versionParam(),
+        f: 'json', token: _token
+      }).toString()
+    }).then(r => r.json()).catch(() => ({}));
+
     if (district != null) {
       // â”€â”€ Layer 114: district boundary events â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       endDesc = 'END OF DISTRICT';
@@ -1484,33 +1517,27 @@
       }
 
     } else {
-      // â”€â”€ Layer 116: route max AR measure â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      // ── Layer 116: route max AR measure (no district/county filter) ──────────
       endDesc = 'END OF ROUTE';
-      const ridClauses = [...new Set(segments.map(({ fromBest }) => {
-        const rid = fromBest.routeId.endsWith('_S') ? fromBest.routeId.slice(0, -2) + '_P' : fromBest.routeId;
-        return `RouteID = '${rid}'`;
-      }))];
-      const body = new URLSearchParams({
-        where:             `(${ridClauses.join(' OR ')})${getDateFilter()}`,
-        outFields:         'RouteID,ToARMeasure',
-        returnGeometry:    'false',
-        orderByFields:     'ToARMeasure DESC',
-        resultRecordCount: '1',
-        ...versionParam(),
-        f: 'json', token: _token
-      });
-      try {
-        const data = await fetch(`${CONFIG.mapServiceUrl}/116/query`, {
-          method: 'POST', headers, body: body.toString()
-        }).then(r => r.json()).catch(() => ({}));
-        if (!data.error) {
-          const feat = (data.features ?? [])[0];
-          if (feat?.attributes?.ToARMeasure != null) endArMeasure = feat.attributes.ToARMeasure;
-        } else {
-          console.error(`[hsl_queryEndRecord] layer 116 error ${data.error.code}: ${data.error.message}`);
+      const data116 = await routeEndPromise;
+      if (!data116.error) {
+        const feat = (data116.features ?? [])[0];
+        if (feat?.attributes?.ToARMeasure != null) endArMeasure = feat.attributes.ToARMeasure;
+      } else {
+        console.error(`[hsl_queryEndRecord] layer 116 error ${data116.error.code}: ${data116.error.message}`);
+      }
+    }
+
+    // When the district or county boundary coincides with the actual end of the route,
+    // promote the label to END OF ROUTE so the district/county ending is suppressed.
+    if (endArMeasure != null && endDesc !== 'END OF ROUTE') {
+      const data116 = await routeEndPromise; // already resolved — no extra round-trip
+      if (!data116.error) {
+        const feat     = (data116.features ?? [])[0];
+        const routeEnd = feat?.attributes?.ToARMeasure;
+        if (routeEnd != null && Math.abs(endArMeasure - routeEnd) <= 0.005) {
+          endDesc = 'END OF ROUTE';
         }
-      } catch (e) {
-        console.error('[hsl_queryEndRecord] layer 116 error:', e.message);
       }
     }
 
@@ -1570,6 +1597,12 @@
       pmSuffix  = rid.length > 8 ? rid[8] : '.';
       pmMeasure = pmResult.measure != null ? String(pmResult.measure) : '';
     }
+
+    console.log(`[hsl_queryEndRecord PM] endArMeasure=${endArMeasure} lookupMeasure=${lookupMeasure} routeNumDigits=${routeNumDigits} endDesc=${endDesc}`);
+    console.log(`[hsl_queryEndRecord PM] translatedLocations:`, JSON.stringify((pmLoc?.translatedLocations ?? []).map(r => ({ routeId: r.routeId, measure: r.measure }))));
+    console.log(`[hsl_queryEndRecord PM] selected pmResult:`, JSON.stringify(pmResult ? { routeId: pmResult.routeId, measure: pmResult.measure } : null));
+
+    if (endDesc === 'END OF ROUTE' && routeNumDigits) endDesc = `END OF ROUTE ${routeNumDigits}`;
 
     return {
       type:        'landmark',
@@ -1842,14 +1875,52 @@
       if (allPairs.length === 0) { hsl_showRampResults('none'); return; }
 
       const lastPair = allPairs[allPairs.length - 1];
-      const endPair = (lastPair?.type === 'cityend' || lastPair?.type === 'citybegin' || lastPair?.type === 'countyend' || lastPair?.type === 'countybegin') ? null : await hsl_queryEndRecord(segments, district, county, paddedRoute);
+      // If the last record is a county or city boundary, check whether it falls on
+      // the actual end of the route.  If it does, remove it so that hsl_queryEndRecord
+      // can place an END OF ROUTE record there instead.
+      if (lastPair?.type === 'countyend' || lastPair?.type === 'countybegin' ||
+          lastPair?.type === 'cityend'   || lastPair?.type === 'citybegin') {
+        const _ridClauses = [...new Set(segments.map(({ fromBest }) => {
+          const _rid = fromBest.routeId.endsWith('_S') ? fromBest.routeId.slice(0, -2) + '_P' : fromBest.routeId;
+          return `RouteID = '${_rid}'`;
+        }))];
+        try {
+          const d116 = await fetch(`${CONFIG.mapServiceUrl}/116/query`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              where: `(${_ridClauses.join(' OR ')})${getDateFilter()}`,
+              outFields: 'RouteID,ToARMeasure', returnGeometry: 'false',
+              orderByFields: 'ToARMeasure DESC', resultRecordCount: '1',
+              ...versionParam(), f: 'json', token: _token
+            }).toString()
+          }).then(r => r.json());
+          const routeEnd = (d116.features ?? [])[0]?.attributes?.ToARMeasure;
+          if (routeEnd != null && Math.abs(lastPair.arMeasure - routeEnd) <= 0.005) {
+            allPairs.pop(); // remove the boundary record; END OF ROUTE will replace it
+          }
+        } catch (e) {
+          console.warn('[hsl end check] layer 116 error:', e.message);
+        }
+      }
+      const updatedLastPair = allPairs[allPairs.length - 1];
+      const endPair = (updatedLastPair?.type === 'cityend' || updatedLastPair?.type === 'citybegin' || updatedLastPair?.type === 'countyend' || updatedLastPair?.type === 'countybegin') ? null : await hsl_queryEndRecord(segments, district, county, paddedRoute);
       if (endPair) {
         const pmKey = p => `${p.pmPrefix}|${parseFloat(p.pmMeasure).toFixed(3)}|${p.pmSuffix}`;
         const existingPmKeys = new Set(allPairs.filter(p => p.type !== 'intersection' && p.type !== 'ramp' && p.pmMeasure !== '' && p.pmMeasure != null && !isNaN(parseFloat(p.pmMeasure))).map(pmKey));
         if (!endPair.pmMeasure || isNaN(parseFloat(endPair.pmMeasure)) || !existingPmKeys.has(pmKey(endPair))) {
           const endHgMap = await queryRangeLayer([endPair], 116, 'Highway_Group');
           endHgMap.forEach((v, k) => hgMap.set(k, v));
-          allPairs.push(endPair);
+          // Insert before any same-AR records that belong to a different county
+          // (e.g. COUNTY BEGIN of the next county that shares the district boundary AR).
+          const endAr = endPair.arMeasure ?? Infinity;
+          let insertIdx = allPairs.length;
+          for (let k = allPairs.length - 1; k >= 0; k--) {
+            const pAr = allPairs[k].arMeasure ?? Infinity;
+            if (Math.round(pAr * 1000) !== Math.round(endAr * 1000)) break;
+            if (endPair.county && allPairs[k].county && allPairs[k].county !== endPair.county) insertIdx = k;
+          }
+          allPairs.splice(insertIdx, 0, endPair);
         }
       }
       const beginPair = await hsl_queryBeginRecord(segments, district, county, paddedRoute);
@@ -1962,7 +2033,15 @@
         if (!endPair.pmMeasure || isNaN(parseFloat(endPair.pmMeasure)) || !existingPmKeys.has(pmKey(endPair))) {
           const endHgMap = await queryRangeLayer([endPair], 116, 'Highway_Group');
           endHgMap.forEach((v, k) => hgMap.set(k, v));
-          allPairs.push(endPair);
+          // Insert before any same-AR records that belong to a different county.
+          const endAr = endPair.arMeasure ?? Infinity;
+          let insertIdx = allPairs.length;
+          for (let k = allPairs.length - 1; k >= 0; k--) {
+            const pAr = allPairs[k].arMeasure ?? Infinity;
+            if (Math.round(pAr * 1000) !== Math.round(endAr * 1000)) break;
+            if (endPair.county && allPairs[k].county && allPairs[k].county !== endPair.county) insertIdx = k;
+          }
+          allPairs.splice(insertIdx, 0, endPair);
         }
       }
       const beginPair = await hsl_queryBeginRecord(segments, null, null, paddedRouteNum);
@@ -2203,6 +2282,8 @@
                      p.type === 'cityend'   ||
                      p.type === 'countybegin' ||
                      p.type === 'countyend' ||
+                     p.name?.startsWith('hsl_end_') ||
+                     p.name?.startsWith('hsl_begin_') ||
                      isRealignment ||
                      isIABoundary                       ? 'hsl-item-cb'
                    : p.hwyGroup === 'R'                 ? 'hsl-item-ia-r'
@@ -2241,6 +2322,8 @@
                      p.type === 'cityend'   ||
                      p.type === 'countybegin' ||
                      p.type === 'countyend' ||
+                     p.name?.startsWith('hsl_end_') ||
+                     p.name?.startsWith('hsl_begin_') ||
                      isRealignment ||
                      isIABoundary                       ? 'hsl-row-cb'
                    : p.hwyGroup === 'R'                 ? 'hsl-row-ia-r'
