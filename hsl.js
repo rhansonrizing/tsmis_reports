@@ -101,10 +101,30 @@
     // Drop orphaned countyend records whose countybegin was filtered out
     // (county ended at/before report start, never began within the report range)
     const countyCodesWithBegin = new Set(filtered.filter(p => p.type === 'countybegin').map(p => p.county));
-    return filtered.filter(p => {
+    const deOrphaned = filtered.filter(p => {
       if (p.type !== 'countyend') return true;
       if (countyCodesWithBegin.has(p.county)) return true;
       return false;
+    });
+
+    // Suppress city boundary records that share a PM prefix+measure with any
+    // naturally-occurring H record (landmark, equation, routebreak). The city
+    // boundary is redundant — the road position is already annotated.
+    const normPfx = p => (p.pmPrefix === '.' ? '' : (p.pmPrefix ?? ''));
+    const pmPrefixMeasure = p => {
+      const m = parseFloat(p.pmMeasure);
+      return `${normPfx(p)}|${isNaN(m) ? (p.pmMeasure ?? '') : m.toFixed(3)}`;
+    };
+    const naturalHKeys = new Set(
+      deOrphaned
+        .filter(p => (p.type === 'landmark' || p.type === 'equation' || p.type === 'routebreak') &&
+                     p.pmMeasure !== '' && p.pmMeasure != null && !isNaN(parseFloat(p.pmMeasure)))
+        .map(pmPrefixMeasure)
+    );
+    return deOrphaned.filter(p => {
+      if (!isCityType(p.type)) return true;
+      if (p.pmMeasure === '' || p.pmMeasure == null || isNaN(parseFloat(p.pmMeasure))) return true;
+      return !naturalHKeys.has(pmPrefixMeasure(p));
     });
   }
 
@@ -2016,7 +2036,7 @@
     const odMap = translateToOD(allPairs);
     const results = allPairs.map((p, i) => {
       let hwyGroup = hwyMap.get(p.name) ?? '';
-      if (p.type === 'landmark' && p.desc && /INDEP/i.test(p.desc)) {
+      if (p.type === 'landmark' && p.desc && /IND.*ALIGN/i.test(p.desc)) {
         if (p.desc === 'BEGIN LEFT INDEPENDENT ALIGNMENT'  || p.desc === 'END LEFT INDEPENDENT ALIGNMENT' ||
             p.desc === 'BEGIN RIGHT INDEPENDENT ALIGNMENT' || p.desc === 'END RIGHT INDEPENDENT ALIGNMENT') {
           // Full-name variants: alignment field is reliable (record is on the R/L route).

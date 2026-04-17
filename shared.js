@@ -768,10 +768,18 @@ async function loadCountyCodeDomain() {
     // Matches any BEGIN/END INDEPENDENT ALIGNMENT landmark regardless of the
     // exact wording used (data uses many abbreviations: "BEG INDEP ALIGN",
     // "END INDEP ALIGN LT & RT", "BEGIN INDEP ALIGN - LT", etc.).
-    const isIABoundaryRec = p => p.type === 'landmark' && p.desc && /INDEP/i.test(p.desc);
+    // Matches BEGIN/END INDEPENDENT ALIGNMENT landmarks regardless of abbreviation:
+    // "INDEP ALIGN", "IND ALIGN" (abbreviated form without the 'EP'), "INDEPENDENT ALIGNMENT".
+    const isIABoundaryRec = p => p.type === 'landmark' && p.desc && /IND.*ALIGN/i.test(p.desc);
+
+    const fmtP = p => `[${p.pmSuffix??'?'}|hg=${p.hgValue??'-'}|ar=${p.arMeasure?.toFixed(3)??'?'}] ${p.desc??p.type}`;
 
     // Records absorbed by a section's tail scan so the outer loop can skip them.
     const absorbedRecs = new Set();
+    // R/L-suffix IA boundary records (e.g. BEGIN LEFT INDEPENDENT ALIGNMENT) that
+    // appear before their section trigger in sort order. Deferred here and flushed
+    // into the next section's allSec so they land in rGroup/lGroup.
+    const deferredIABounds = [];
     const grouped = [];
     let i = 0;
     while (i < main.length) {
@@ -822,7 +830,10 @@ async function loadCountyCodeDomain() {
                 const pk = main[peekK];
                 if (pk.type === 'equation') { peekK++; continue; }
                 if (isIABoundaryRec(pk)) {
-                  if (pk.pmSuffix !== 'R' && pk.pmSuffix !== 'L') peekedIABounds.push(pk);
+                  // Collect ALL IA boundary records (both dot-sfx and R/L-sfx) so
+                  // they can be unconditionally absorbed into this section below.
+                  peekedIABounds.push(pk);
+                  console.log(`[sortIA] peek collected IA bound: ${fmtP(pk)}`);
                   peekK++; continue;
                 }
                 if (Math.round(pk.arMeasure * 1000) === eq2Ar3dp &&
@@ -833,23 +844,20 @@ async function loadCountyCodeDomain() {
               const moreRLAhead = peekK < main.length &&
                 (main[peekK].pmSuffix === 'R' || main[peekK].pmSuffix === 'L' ||
                  main[peekK].hgValue === 'R'  || main[peekK].hgValue === 'L');
+              // Always absorb ALL peeked IA boundaries into this section — they
+              // belong to this alignment span regardless of whether more R/L records
+              // follow (e.g. END RIGHT INDEPENDENT ALIGNMENT after the last ramp).
+              for (const pk of peekedIABounds) { tailSection.push(pk); absorbedRecs.add(pk); }
               if (moreRLAhead) {
-                // Absorb dot-suffix IA boundaries collected during the peek (e.g.
-                // END INDEP ALIGN - RT) into the section so they land in dotGroup
-                // output, before the equation pair rather than after it.
-                for (const pk of peekedIABounds) { tailSection.push(pk); absorbedRecs.add(pk); }
                 // Tail scan: collect remaining alignment records into tailSection.
-                // eq2 and R/L-suffix IA boundary records stay in main[] for the outer loop.
                 let k = peekK;
                 while (k < main.length) {
                   const tr = main[k];
                   if (tr.type === 'equation') { k++; continue; }
                   if (isIABoundaryRec(tr)) {
-                    // Absorb dot-suffix IA boundaries (e.g. END INDEP ALIGN - LT) into
-                    // the section dotGroup; leave R/L-suffix ones for the outer loop.
-                    if (tr.pmSuffix !== 'R' && tr.pmSuffix !== 'L') {
-                      tailSection.push(tr); absorbedRecs.add(tr);
-                    }
+                    // Absorb all IA boundary records into the section.
+                    console.log(`[sortIA] tail scan absorbed IA bound: ${fmtP(tr)}`);
+                    tailSection.push(tr); absorbedRecs.add(tr);
                     k++; continue;
                   }
                   if (tr.type !== 'equation' && (tr.pmSuffix === 'R' || tr.pmSuffix === 'L' ||
@@ -913,7 +921,10 @@ async function loadCountyCodeDomain() {
             // sub-sections and belongs in the section's trailing bucket.
             // Stop immediately if the record is an IA boundary (BEGIN/END INDEP ALIGN)
             // — these mark the edge of the alignment span, not inter-group filler.
-            if (isIABoundaryRec(cur)) break;
+            if (isIABoundaryRec(cur)) {
+              console.log(`[sortIA] section inner-loop break at IA bound: ${fmtP(cur)}`);
+              break;
+            }
             // Stop immediately if the record's own county differs from the section's
             // trigger county — independent alignments do not span county boundaries.
             if (cur.county && sectionCounty && cur.county !== sectionCounty) break;
@@ -943,7 +954,37 @@ async function loadCountyCodeDomain() {
           }
         }
         const section = main.slice(j, i);
-        const allSec  = [...section, ...tailSection];
+        // Post-section absorption: absorb any immediately-following IA boundary
+        // records that are END markers for this alignment span. These can appear
+        // right after the section's last R/L record when the inner loop ends
+        // without an eq2 boundary (e.g. county mismatch stopped the sfx=R branch
+        // before it could consume END RIGHT INDEPENDENT ALIGNMENT).
+        // BEGIN records are excluded — they belong to the next section and are
+        // handled by the defer path in the outer-push else branch.
+        // Post-section absorption: scan ahead past any city boundary records
+        // (which can sort before IA END records at the same AR) and absorb
+        // immediately-following IA END records into this section.
+        // Uses a separate cursor so city boundaries stay in main[] for outer-push.
+        // No county guard — IA END records legitimately appear at county lines.
+        {
+          let lookK = i;
+          while (lookK < main.length) {
+            const trailing = main[lookK];
+            const isCityBound = trailing.type === 'citybegin' || trailing.type === 'cityend' ||
+                                trailing.type === 'citybreak' || trailing.type === 'cityresume';
+            if (isCityBound) { lookK++; continue; }
+            if (!isIABoundaryRec(trailing)) break;
+            if (absorbedRecs.has(trailing)) { lookK++; continue; }
+            if (/\bBEG/i.test(trailing.desc)) break;
+            console.log(`[sortIA] post-section absorbed IA bound: ${fmtP(trailing)}`);
+            tailSection.push(trailing); absorbedRecs.add(trailing); lookK++;
+          }
+        }
+        // Flush deferred pre-section R/L-sfx IA bounds (e.g. BEGIN LEFT INDEPENDENT
+        // ALIGNMENT that sorts before the first L ramp) into this section's allSec
+        // so they land in rGroup/lGroup rather than being outer-pushed.
+        const deferred = deferredIABounds.splice(0);
+        const allSec  = [...deferred, ...section, ...tailSection];
         // IA boundary records (e.g. "END INDEP ALIGN - RT/LT") have sfx='.' but
         // belong with their respective alignment group when absorbed into a section.
         const isRtIA = p => isIABoundaryRec(p) && /\bRT\b/i.test(p.desc) && !/\bLT\b/i.test(p.desc);
@@ -953,6 +994,15 @@ async function loadCountyCodeDomain() {
         const eGroup   = allSec.filter(p => p.pmSuffix === 'E' && p.type !== 'equation');
         const dotGroup = allSec.filter(p => p.pmSuffix !== 'R' && p.pmSuffix !== 'L' && p.pmSuffix !== 'E' && !isRtIA(p) && !isLtIA(p));
         const rUnconf  = allSec.filter(p => p.pmSuffix === 'R' && p.hgValue !== 'R' && p.alignment !== 'R');
+        const secHasIA = allSec.some(isIABoundaryRec);
+        if (secHasIA) {
+          const trigger = main[j];
+          console.log(`[sortIA] section trigger: ${fmtP(trigger)}`);
+          console.log(`[sortIA]   rGroup(${rGroup.length}): ${rGroup.map(fmtP).join(' | ')}`);
+          console.log(`[sortIA]   lGroup(${lGroup.length}): ${lGroup.map(fmtP).join(' | ')}`);
+          console.log(`[sortIA]   dotGroup(${dotGroup.length}): ${dotGroup.map(fmtP).join(' | ')}`);
+          console.log(`[sortIA]   rUnconf(${rUnconf.length}): ${rUnconf.map(fmtP).join(' | ')}`);
+        }
         // R group: only R-suffix records confirmed on the R alignment by hgValue.
         // R-suffix records with empty hgValue are not confirmed as R-alignment and
         // go to the trailing bucket after the L group.
@@ -967,9 +1017,22 @@ async function loadCountyCodeDomain() {
         grouped.push(...dotGroup);
         grouped.push(...rUnconf);
       } else {
-        grouped.push(main[i++]);
+        const rec = main[i++];
+        if (isIABoundaryRec(rec) && (rec.pmSuffix === 'R' || rec.pmSuffix === 'L')) {
+          // R/L-sfx IA boundary before its section trigger (e.g. BEGIN LEFT INDEPENDENT
+          // ALIGNMENT before the first L ramp). Defer to flush into the next section.
+          console.log(`[sortIA] deferring pre-section IA bound: ${fmtP(rec)}`);
+          deferredIABounds.push(rec);
+          continue;
+        }
+        if (isIABoundaryRec(rec)) {
+          console.log(`[sortIA] outer-push IA bound: ${fmtP(rec)}`);
+        }
+        grouped.push(rec);
       }
     }
+    // Flush any deferred IA bounds not claimed by a section (safety valve).
+    for (const p of deferredIABounds) grouped.push(p);
 
     // Re-insert each eq1 immediately before its eq2 partner.
     const result = [];
