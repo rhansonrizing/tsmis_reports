@@ -31,10 +31,19 @@
     // (which store '' after stripping '.') match H records that store '.' literally.
     const normPfx = p => (p.pmPrefix === '.' ? '' : (p.pmPrefix ?? ''));
     const pmKey = p => `${p.county ?? ''}|${normPfx(p)}|${parseFloat(p.pmMeasure).toFixed(3)}`;
-    const isNaturalH = p => !isRealignment(p) && !isIABoundary(p) && p.type !== 'intersection' && p.type !== 'ramp';
+    const isNaturalH = p => !isRealignment(p) && !isIABoundary(p) &&
+      p.type !== 'intersection' && p.type !== 'ramp' &&
+      p.type !== 'countybegin' && p.type !== 'countyend' &&
+      p.type !== 'citybegin'   && p.type !== 'cityend'   &&
+      p.type !== 'citybreak'   && p.type !== 'cityresume';
     const naturalPmKeys = new Set(
       pairs
         .filter(p => isNaturalH(p) && p.pmMeasure !== '' && p.pmMeasure != null && !isNaN(parseFloat(p.pmMeasure)))
+        .map(pmKey)
+    );
+    const iaBdryPmKeys = new Set(
+      pairs
+        .filter(p => isIABoundary(p) && p.pmMeasure !== '' && p.pmMeasure != null && !isNaN(parseFloat(p.pmMeasure)))
         .map(pmKey)
     );
     const naturalArMeasures = pairs
@@ -75,6 +84,7 @@
           beginArMeasures.some(ar => Math.abs(ar - p.arMeasure) < 0.001)) return false;
       if (p.pmMeasure === '' || p.pmMeasure == null || isNaN(parseFloat(p.pmMeasure))) return true;
       if (naturalPmKeys.has(key)) return false;
+      if (iaBdryPmKeys.has(key)) return false;
       return true;
     });
   }
@@ -125,6 +135,51 @@
       if (!isCityType(p.type)) return true;
       if (p.pmMeasure === '' || p.pmMeasure == null || isNaN(parseFloat(p.pmMeasure))) return true;
       return !naturalHKeys.has(pmPrefixMeasure(p));
+    });
+  }
+
+  // Applies the suppression hierarchy for synthetic boundary records after all
+  // records (including hsl_end_*/hsl_begin_*) have been inserted into allPairs.
+  //
+  // Tier 1 — hsl_end_*/hsl_begin_*: always shown
+  // Tier 2 — ia_bdry_*:             suppressed if hsl_end_*/hsl_begin_* at same AR
+  //                                  (natural-H suppression handled earlier by hsl_filterRealignmentLandmarks)
+  // Tier 3 — city*:                 suppressed if hsl_end_*/hsl_begin_* or ia_bdry_* at same AR
+  // Tier 4 — county*:               suppressed if city*, hsl_end_*/hsl_begin_*, or ia_bdry_* at same AR
+  function hsl_applySyntheticHierarchy(pairs) {
+    const AR_TOL       = 0.001;
+    const isHslTerminal = p => p.name?.startsWith('hsl_end_') || p.name?.startsWith('hsl_begin_');
+    const isIABdry      = p => p.name?.startsWith('ia_bdry_');
+    const isCityType    = p => p.type === 'citybegin' || p.type === 'cityend' || p.type === 'citybreak' || p.type === 'cityresume';
+    const isCountyType  = p => p.type === 'countybegin' || p.type === 'countyend';
+    const arOf          = p => (p.arMeasure != null && !isNaN(p.arMeasure)) ? p.arMeasure : null;
+    const anyWithin     = (ars, ar) => ars.some(a => Math.abs(a - ar) < AR_TOL);
+
+    const hslArs = pairs.filter(isHslTerminal).map(arOf).filter(a => a != null);
+
+    const afterIA = pairs.filter(p => {
+      if (!isIABdry(p)) return true;
+      const ar = arOf(p);
+      if (ar == null) return true;
+      return !anyWithin(hslArs, ar);
+    });
+
+    const iaBdryArs = afterIA.filter(isIABdry).map(arOf).filter(a => a != null);
+
+    const afterCity = afterIA.filter(p => {
+      if (!isCityType(p)) return true;
+      const ar = arOf(p);
+      if (ar == null) return true;
+      return !anyWithin(hslArs, ar) && !anyWithin(iaBdryArs, ar);
+    });
+
+    const cityArs = afterCity.filter(isCityType).map(arOf).filter(a => a != null);
+
+    return afterCity.filter(p => {
+      if (!isCountyType(p)) return true;
+      const ar = arOf(p);
+      if (ar == null) return true;
+      return !anyWithin(cityArs, ar) && !anyWithin(hslArs, ar) && !anyWithin(iaBdryArs, ar);
     });
   }
 
@@ -378,12 +433,11 @@
   /** Queries layer 3 for L/R alignment segments and returns synthetic BEGIN/END
    *  landmark pairs at their PM boundaries. Suppression (if an H record already
    *  sits at the same PM location) is handled by hsl_filterRealignmentLandmarks. */
-  async function queryIndependentAlignmentBoundaries(segments, routeNumDigits, county) {
+  async function queryIndependentAlignmentBoundaries(segments, routeNumDigits, county = null) {
     if (!segments.length) return [];
-    const resolvedCounty = normalizeCountyCode(county);
-    if (!resolvedCounty) return [];
+    const resolvedCounty = county ? normalizeCountyCode(county) : null;
 
-    const where = `RouteNum = '${routeNumDigits}' AND County = '${resolvedCounty.replace(/'/g, "''")}' AND (PMSuffix = 'L' OR PMSuffix = 'R') AND LRSToDate IS NULL`;
+    const where = `RouteNum = '${routeNumDigits}' AND (PMSuffix = 'L' OR PMSuffix = 'R') AND LRSToDate IS NULL`;
     const body = new URLSearchParams({
       where,
       outFields:      'RouteId,RouteNum,PMSuffix,County',
@@ -411,7 +465,12 @@
       console.error(`[queryIndependentAlignmentBoundaries] API error ${code}: ${data.error.message}`);
       return [];
     }
-    const features = data.features ?? [];
+    const allFeatures = data.features ?? [];
+    console.log(`[queryIABoundaries] query returned ${allFeatures.length} features`, allFeatures.map(f => f.attributes));
+    const features = resolvedCounty
+      ? allFeatures.filter(f => normalizeCountyCode(f.attributes?.County) === resolvedCounty)
+      : allFeatures;
+    console.log(`[queryIABoundaries] after county filter (resolvedCounty=${resolvedCounty}): ${features.length} features`);
     if (!features.length) return [];
 
     // M values on layer 3 geometry are PM measures. Extract min/max per feature.
@@ -452,8 +511,8 @@
     // One translate point per boundary: [L-begin, L-end, R-begin, R-end] (only present suffixes)
     const xlatePoints = [];
     for (const [suffix, e] of bySuffix) {
-      xlatePoints.push({ suffix, isBegin: true,  routeId: e.minRouteId, measure: e.minM, county: e.county });
-      xlatePoints.push({ suffix, isBegin: false, routeId: e.maxRouteId, measure: e.maxM, county: e.county });
+      xlatePoints.push({ suffix, sectionIdx: 0, isBegin: true,  routeId: e.minRouteId, measure: e.minM, county: e.county });
+      xlatePoints.push({ suffix, sectionIdx: 0, isBegin: false, routeId: e.maxRouteId, measure: e.maxM, county: e.county });
     }
 
     const xlateUrl = `${CONFIG.mapServiceUrl}/exts/LRServer/networkLayers/3/translate`;
@@ -476,6 +535,8 @@
     // Only keep results that fall within the queried segment AR range.
     const segArMin = Math.min(...segments.map(s => Math.min(s.fromBest.measure, s.toBest.measure))) - 0.01;
     const segArMax = Math.max(...segments.map(s => Math.max(s.fromBest.measure, s.toBest.measure))) + 0.01;
+    console.log(`[queryIABoundaries] xlatePoints:`, xlatePoints.map(tp => ({ suffix: tp.suffix, isBegin: tp.isBegin, routeId: tp.routeId, measure: tp.measure })));
+    console.log(`[queryIABoundaries] segArRange: ${segArMin.toFixed(3)} – ${segArMax.toFixed(3)}`);
 
     const pairs = [];
     xlatePoints.forEach((tp, idx) => {
@@ -489,6 +550,7 @@
                       ?? arXlated.find(r => r.measure != null);
       const arMeasure  = arResult?.measure ?? null;
       const inRange    = arMeasure != null && arMeasure >= segArMin && arMeasure <= segArMax;
+      console.log(`[queryIABoundaries] ${tp.suffix} ${tp.isBegin ? 'begin' : 'end'} pmMeasure=${tp.measure} → arMeasure=${arMeasure} inRange=${inRange}`, arXlated.map(r => ({ routeId: r.routeId, measure: r.measure })));
       if (!inRange) return;
 
       const odXlated  = (odData.locations ?? [])[idx]?.translatedLocations ?? [];
@@ -502,10 +564,13 @@
       // Parse pmPrefix from the layer 3 RouteID (index 7, '.' means no prefix)
       const rid      = tp.routeId ?? '';
       const pmPrefix = rid.length > 7 && rid[7] !== '.' ? rid[7] : '';
+      // Clamp near-zero floating-point negatives (e.g. -2.7e-8) to 0 so the
+      // hsl_filterRealignmentLandmarks "m < 0" check doesn't drop begin records.
+      const pmMeasureClamped = (tp.measure < 0 && tp.measure > -0.001) ? 0 : tp.measure;
 
       pairs.push({
         type:        'landmark',
-        name:        `ia_bdry_${tp.suffix}_${tp.isBegin ? 'begin' : 'end'}_${Math.round(tp.measure * 1000)}`,
+        name:        `ia_bdry_${tp.suffix}_${tp.sectionIdx}_${tp.isBegin ? 'begin' : 'end'}_${Math.round(pmMeasureClamped * 1000)}`,
         desc,
         routeId:     arResult?.routeId ?? rid,
         arMeasure,
@@ -513,7 +578,7 @@
         routeSuffix: '',
         pmPrefix,
         pmSuffix:    tp.suffix,
-        pmMeasure:   String(tp.measure),
+        pmMeasure:   String(pmMeasureClamped),
         odMeasure,
         district:    '',
         alignment:   tp.suffix,
@@ -1545,7 +1610,10 @@
 
     // Step slightly inside the boundary for all lookups so they land in the
     // current district/county rather than the adjacent one.
-    const lookupMeasure = endArMeasure - 0.0001;
+    // Floor to 3dp then step one tick inside so the LRServer (which uses strict < on
+    // ToARMeasure at 3dp precision) always receives a measure that is within range.
+    // e.g. endArMeasure=353.3327298 → floor=353.332 → lookupMeasure=353.331
+    const lookupMeasure = Math.floor(endArMeasure * 1000) / 1000 - 0.001;
 
     // If district wasn't supplied (county/route cases), look it up from layer 114
     let resolvedDistrict = district != null ? String(district).padStart(2, '0') : '';
@@ -1568,6 +1636,8 @@
     // Translate AR â†’ OD (4â†’5) and AR â†’ PM (4â†’3) using lookupMeasure so results
     // land inside the current district/county rather than the adjacent one.
     const loc = { routeId: primaryRouteId, measure: lookupMeasure };
+    console.log(`[hsl_queryEndRecord] endArMeasure=${endArMeasure} lookupMeasure=${lookupMeasure} endDesc="${endDesc}"`);
+    console.log(`[hsl_queryEndRecord] translate loc sent:`, JSON.stringify(loc));
     const makeXlateBody = targetIds => new URLSearchParams({
       locations:             JSON.stringify([loc]),
       targetNetworkLayerIds: JSON.stringify(targetIds),
@@ -1589,6 +1659,8 @@
     const pmLoc    = (pmData.locations ?? [])[0];
     const pmResult = (pmLoc?.translatedLocations ?? []).find(r => r.measure != null && routeNumDigits && r.routeId?.includes(routeNumDigits))
                   ?? (pmLoc?.translatedLocations ?? []).find(r => r.measure != null);
+    console.log(`[hsl_queryEndRecord] PM translate full loc:`, JSON.stringify(pmLoc ?? {}));
+    console.log(`[hsl_queryEndRecord] PM translate selected:`, pmResult ? `routeId=${pmResult.routeId} measure=${pmResult.measure}` : 'none');
     let pmPrefix = '', pmSuffix = '.', pmMeasure = '', countyFromPm = '';
     if (pmResult?.routeId) {
       const rid  = pmResult.routeId;
@@ -1597,10 +1669,7 @@
       pmSuffix  = rid.length > 8 ? rid[8] : '.';
       pmMeasure = pmResult.measure != null ? String(pmResult.measure) : '';
     }
-
-    console.log(`[hsl_queryEndRecord PM] endArMeasure=${endArMeasure} lookupMeasure=${lookupMeasure} routeNumDigits=${routeNumDigits} endDesc=${endDesc}`);
-    console.log(`[hsl_queryEndRecord PM] translatedLocations:`, JSON.stringify((pmLoc?.translatedLocations ?? []).map(r => ({ routeId: r.routeId, measure: r.measure }))));
-    console.log(`[hsl_queryEndRecord PM] selected pmResult:`, JSON.stringify(pmResult ? { routeId: pmResult.routeId, measure: pmResult.measure } : null));
+    console.log(`[hsl_queryEndRecord] derived county="${countyFromPm}" pmPrefix="${pmPrefix}" pmSuffix="${pmSuffix}" pmMeasure="${pmMeasure}"`);
 
     if (endDesc === 'END OF ROUTE' && routeNumDigits) endDesc = `END OF ROUTE ${routeNumDigits}`;
 
@@ -1610,7 +1679,7 @@
       desc:        endDesc,
       routeId:     primaryRouteId,
       arMeasure:   endArMeasure,
-      county:      countyFromPm,
+      county:      county ? normalizeCountyCode(county) : countyFromPm,
       routeSuffix: '',
       pmPrefix,
       pmSuffix,
@@ -1910,6 +1979,14 @@
         const existingPmKeys = new Set(allPairs.filter(p => p.type !== 'intersection' && p.type !== 'ramp' && p.pmMeasure !== '' && p.pmMeasure != null && !isNaN(parseFloat(p.pmMeasure))).map(pmKey));
         if (!endPair.pmMeasure || isNaN(parseFloat(endPair.pmMeasure)) || !existingPmKeys.has(pmKey(endPair))) {
           const endHgMap = await queryRangeLayer([endPair], 116, 'Highway_Group');
+          const endHg = endHgMap.get(endPair.name) ?? '';
+          if (endHg === 'R' || endHg === 'L') {
+            // Layer 116 returned an IA-alignment value for a terminal record — fall back
+            // to the last non-R/L HG in allPairs (main alignment context before end).
+            const prev = [...allPairs].reverse().find(p => { const h = hgMap.get(p.name) ?? ''; return h !== 'R' && h !== 'L'; });
+            endHgMap.set(endPair.name, prev ? (hgMap.get(prev.name) ?? '') : '');
+          }
+          console.log(`[hsl_runDistrictRouteMode] endPair HG: layer116="${endHg}" resolved="${endHgMap.get(endPair.name)}" (arMeasure=${endPair.arMeasure})`);
           endHgMap.forEach((v, k) => hgMap.set(k, v));
           // Insert before any same-AR records that belong to a different county
           // (e.g. COUNTY BEGIN of the next county that shares the district boundary AR).
@@ -1939,6 +2016,7 @@
           allPairs.unshift(beginPair);
         }
       }
+      allPairs.splice(0, allPairs.length, ...hsl_applySyntheticHierarchy(allPairs));
       await hsl_queryRampDescriptions(allPairs, unresolvedIntersections, hgMap);
     } catch (err) {
       hsl_showRampResults('error', err.message || 'An error occurred.');
@@ -2032,6 +2110,12 @@
         const existingPmKeys = new Set(allPairs.filter(p => p.type !== 'intersection' && p.type !== 'ramp' && p.pmMeasure !== '' && p.pmMeasure != null && !isNaN(parseFloat(p.pmMeasure))).map(pmKey));
         if (!endPair.pmMeasure || isNaN(parseFloat(endPair.pmMeasure)) || !existingPmKeys.has(pmKey(endPair))) {
           const endHgMap = await queryRangeLayer([endPair], 116, 'Highway_Group');
+          const endHg = endHgMap.get(endPair.name) ?? '';
+          if (endHg === 'R' || endHg === 'L') {
+            const prev = [...allPairs].reverse().find(p => { const h = hgMap.get(p.name) ?? ''; return h !== 'R' && h !== 'L'; });
+            endHgMap.set(endPair.name, prev ? (hgMap.get(prev.name) ?? '') : '');
+          }
+          console.log(`[hsl_runTranslate] endPair HG: layer116="${endHg}" resolved="${endHgMap.get(endPair.name)}" (arMeasure=${endPair.arMeasure})`);
           endHgMap.forEach((v, k) => hgMap.set(k, v));
           // Insert before any same-AR records that belong to a different county.
           const endAr = endPair.arMeasure ?? Infinity;
@@ -2059,6 +2143,7 @@
           allPairs.unshift(beginPair);
         }
       }
+      allPairs.splice(0, allPairs.length, ...hsl_applySyntheticHierarchy(allPairs));
       await hsl_queryRampDescriptions(allPairs, unresolvedIntersections, hgMap);
     } finally {
       btn.disabled = false;
@@ -2235,12 +2320,10 @@
     return results.map((p, i) => {
       if (p.type === 'equation' && !p.isSecondEq) return '';
       if (p.type === 'routebreak' && p.desc === 'Route Break') return '';
-      if (isIABoundary(p)) return '';
       const curOd = parseFloat(p.odMeasure);
       const isExcluded = r =>
         (r.type === 'equation' && !r.isSecondEq) ||
-        (r.type === 'routebreak' && r.desc === 'Route Break') ||
-        isIABoundary(r);
+        (r.type === 'routebreak' && r.desc === 'Route Break');
       const rem = results.slice(i + 1).filter(r => !isExcluded(r));
       let nextEntry;
       if (p.pmSuffix === 'R') {
@@ -2300,7 +2383,7 @@
          <span style="justify-self:start;">${p.pmSuffix === 'E' ? 'E' : ''}</span>
          ${hgAndF}
          ${isEq1 ? '' : `<span style="display:block;text-align:center;">${p.crossRouteFormatted ? '------->' : p.hasCrossRoute ? '*P*' : p.featureType !== 'R' && p.featureType !== 'I' && length !== '' ? padMeasure(length) : ''}</span>`}
-         ${isEq1 ? '' : `<span style="text-align:left;">${p.desc ? esc(p.desc) : ''}</span>`}
+         ${isEq1 ? '' : `<span style="text-align:left;">${p.desc ? (isIABoundary ? esc(p.desc).replace(/\b(RIGHT|LEFT)\b/, '<strong>$1</strong>') : esc(p.desc)) : ''}</span>`}
          <span style="color:#6b7280;font-size:0.75em;text-align:right;">${p.arMeasure != null && !isNaN(p.arMeasure) ? parseFloat(p.arMeasure).toFixed(3) : ''}</span>
          <span style="color:#6b7280;font-size:0.75em;text-align:right;">${p.odMeasure !== '' && p.odMeasure != null ? parseFloat(p.odMeasure).toFixed(3) : ''}</span>
        </li>`;
@@ -2348,7 +2431,7 @@
         : `<td${hgFStyle}>${isIndAlignEq2 ? 'E' : p.pmSuffix === 'L' ? 'L' : p.hwyGroup ? esc(p.hwyGroup) : ''}</td>
            <td${ftStyle}>${p.featureType ? esc(p.featureType) : ''}</td>
            <td style="text-align:center">${distToNext}</td>
-           <td style="text-align:left">${p.desc ? esc(p.desc) : ''}</td>`
+           <td style="text-align:left">${p.desc ? (isIABoundary ? esc(p.desc).replace(/\b(RIGHT|LEFT)\b/, '<strong>$1</strong>') : esc(p.desc)) : ''}</td>`
       }
     </tr>`;
   }

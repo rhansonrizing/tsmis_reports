@@ -325,7 +325,7 @@ async function loadCountyCodeDomain() {
     const resolvedCounty  = normalizeCountyCode(county);
     const districtFilter  = district     ? ` AND District = ${parseInt(district, 10)}` : '';
     const countyFilter    = resolvedCounty ? ` AND County = '${resolvedCounty.replace(/'/g, "''")}'` : '';
-    const where = `(RouteSuffix IS NULL OR RouteSuffix <> 'S')${districtFilter}${countyFilter} AND LRSToDate IS NULL`;
+    const where = `LRSToDate IS NULL${districtFilter}${countyFilter}`;
 
     const body = new URLSearchParams({
       where,
