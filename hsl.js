@@ -466,11 +466,9 @@
       return [];
     }
     const allFeatures = data.features ?? [];
-    console.log(`[queryIABoundaries] query returned ${allFeatures.length} features`, allFeatures.map(f => f.attributes));
     const features = resolvedCounty
       ? allFeatures.filter(f => normalizeCountyCode(f.attributes?.County) === resolvedCounty)
       : allFeatures;
-    console.log(`[queryIABoundaries] after county filter (resolvedCounty=${resolvedCounty}): ${features.length} features`);
     if (!features.length) return [];
 
     // M values on layer 3 geometry are PM measures. Extract min/max per feature.
@@ -535,9 +533,6 @@
     // Only keep results that fall within the queried segment AR range.
     const segArMin = Math.min(...segments.map(s => Math.min(s.fromBest.measure, s.toBest.measure))) - 0.01;
     const segArMax = Math.max(...segments.map(s => Math.max(s.fromBest.measure, s.toBest.measure))) + 0.01;
-    console.log(`[queryIABoundaries] xlatePoints:`, xlatePoints.map(tp => ({ suffix: tp.suffix, isBegin: tp.isBegin, routeId: tp.routeId, measure: tp.measure })));
-    console.log(`[queryIABoundaries] segArRange: ${segArMin.toFixed(3)} – ${segArMax.toFixed(3)}`);
-
     const pairs = [];
     xlatePoints.forEach((tp, idx) => {
       const arXlated  = (arData.locations ?? [])[idx]?.translatedLocations ?? [];
@@ -550,7 +545,6 @@
                       ?? arXlated.find(r => r.measure != null);
       const arMeasure  = arResult?.measure ?? null;
       const inRange    = arMeasure != null && arMeasure >= segArMin && arMeasure <= segArMax;
-      console.log(`[queryIABoundaries] ${tp.suffix} ${tp.isBegin ? 'begin' : 'end'} pmMeasure=${tp.measure} → arMeasure=${arMeasure} inRange=${inRange}`, arXlated.map(r => ({ routeId: r.routeId, measure: r.measure })));
       if (!inRange) return;
 
       const odXlated  = (odData.locations ?? [])[idx]?.translatedLocations ?? [];
@@ -757,7 +751,7 @@
         arMeasure:  p1.arMeasure,
         county:     p1.county,
         pmPrefix:   p1.pmPrefix,
-        pmSuffix:   p1.pmSuffix,
+        pmSuffix:   p1.pmSuffix === 'E' ? '.' : p1.pmSuffix,
         pmMeasure:  String(p1.pmMeasure),
         odMeasure:  p1.odMeasure,
         district:   '',
@@ -826,7 +820,7 @@
           arMeasure:  p1.arMeasure,
           county:     p1.county,
           pmPrefix:   p1.pmPrefix,
-          pmSuffix:   p1.pmSuffix,
+          pmSuffix:   p1.pmSuffix === 'E' ? '.' : p1.pmSuffix,
           pmMeasure:  String(p1.pmMeasure),
           odMeasure:  p1.odMeasure,
           district:   '',
@@ -1531,6 +1525,7 @@
               (f.attributes?.ToARMeasure ?? -Infinity) > (b?.attributes?.ToARMeasure ?? -Infinity) ? f : b, null);
             if (best?.attributes?.ToARMeasure != null) {
               endArMeasure = best.attributes.ToARMeasure;
+              endDesc = 'END OF COUNTY';
             }
           } else {
             console.error(`[hsl_queryEndRecord] layer 85 (county) error ${data85.error.code}: ${data85.error.message}`);
@@ -1636,8 +1631,6 @@
     // Translate AR â†’ OD (4â†’5) and AR â†’ PM (4â†’3) using lookupMeasure so results
     // land inside the current district/county rather than the adjacent one.
     const loc = { routeId: primaryRouteId, measure: lookupMeasure };
-    console.log(`[hsl_queryEndRecord] endArMeasure=${endArMeasure} lookupMeasure=${lookupMeasure} endDesc="${endDesc}"`);
-    console.log(`[hsl_queryEndRecord] translate loc sent:`, JSON.stringify(loc));
     const makeXlateBody = targetIds => new URLSearchParams({
       locations:             JSON.stringify([loc]),
       targetNetworkLayerIds: JSON.stringify(targetIds),
@@ -1659,8 +1652,6 @@
     const pmLoc    = (pmData.locations ?? [])[0];
     const pmResult = (pmLoc?.translatedLocations ?? []).find(r => r.measure != null && routeNumDigits && r.routeId?.includes(routeNumDigits))
                   ?? (pmLoc?.translatedLocations ?? []).find(r => r.measure != null);
-    console.log(`[hsl_queryEndRecord] PM translate full loc:`, JSON.stringify(pmLoc ?? {}));
-    console.log(`[hsl_queryEndRecord] PM translate selected:`, pmResult ? `routeId=${pmResult.routeId} measure=${pmResult.measure}` : 'none');
     let pmPrefix = '', pmSuffix = '.', pmMeasure = '', countyFromPm = '';
     if (pmResult?.routeId) {
       const rid  = pmResult.routeId;
@@ -1668,8 +1659,32 @@
       pmPrefix  = rid.length > 7 ? rid[7] : '';
       pmSuffix  = rid.length > 8 ? rid[8] : '.';
       pmMeasure = pmResult.measure != null ? String(pmResult.measure) : '';
+
+      // The translate at lookupMeasure (backed up from the route boundary) interpolates
+      // mid-segment and can return a measure that is less than the true PM segment end.
+      // Query layer 1 for the max calibration point on this PM routeId to get the
+      // documented endpoint of the PM segment.
+      try {
+        const calBody = new URLSearchParams({
+          where:             `NetworkId = 2 AND RouteId = '${rid}'`,
+          outFields:         'Measure',
+          returnGeometry:    'false',
+          orderByFields:     'Measure DESC',
+          resultRecordCount: '1',
+          ...versionParam(),
+          f: 'json', token: _token
+        });
+        const calData = await fetch(`${CONFIG.mapServiceUrl}/1/query`, {
+          method: 'POST', headers, body: calBody.toString()
+        }).then(r => r.json()).catch(() => ({}));
+        const calFeat = (calData.features ?? [])[0];
+        if (calFeat?.attributes?.Measure != null) {
+          pmMeasure = String(calFeat.attributes.Measure);
+        }
+      } catch (e) {
+        console.warn('[hsl_queryEndRecord] calibration point PM lookup failed:', e.message);
+      }
     }
-    console.log(`[hsl_queryEndRecord] derived county="${countyFromPm}" pmPrefix="${pmPrefix}" pmSuffix="${pmSuffix}" pmMeasure="${pmMeasure}"`);
 
     if (endDesc === 'END OF ROUTE' && routeNumDigits) endDesc = `END OF ROUTE ${routeNumDigits}`;
 
@@ -1986,7 +2001,6 @@
             const prev = [...allPairs].reverse().find(p => { const h = hgMap.get(p.name) ?? ''; return h !== 'R' && h !== 'L'; });
             endHgMap.set(endPair.name, prev ? (hgMap.get(prev.name) ?? '') : '');
           }
-          console.log(`[hsl_runDistrictRouteMode] endPair HG: layer116="${endHg}" resolved="${endHgMap.get(endPair.name)}" (arMeasure=${endPair.arMeasure})`);
           endHgMap.forEach((v, k) => hgMap.set(k, v));
           // Insert before any same-AR records that belong to a different county
           // (e.g. COUNTY BEGIN of the next county that shares the district boundary AR).
@@ -2115,7 +2129,6 @@
             const prev = [...allPairs].reverse().find(p => { const h = hgMap.get(p.name) ?? ''; return h !== 'R' && h !== 'L'; });
             endHgMap.set(endPair.name, prev ? (hgMap.get(prev.name) ?? '') : '');
           }
-          console.log(`[hsl_runTranslate] endPair HG: layer116="${endHg}" resolved="${endHgMap.get(endPair.name)}" (arMeasure=${endPair.arMeasure})`);
           endHgMap.forEach((v, k) => hgMap.set(k, v));
           // Insert before any same-AR records that belong to a different county.
           const endAr = endPair.arMeasure ?? Infinity;
@@ -2302,8 +2315,16 @@
     for (let i = 1; i < results.length; i++) {
       const d = results[i].district || '';
       if (rowCount >= PAGE_SIZE || (d !== '' && d !== pageDistrict)) {
-        starts.push(i);
-        rowCount = 1;
+        // Don't split an equation pair: if a size-triggered break would place
+        // eq2 first on the new page, pull the break back one so eq1 leads it.
+        let breakAt = i;
+        if (rowCount >= PAGE_SIZE &&
+            results[i].type === 'equation' && results[i].isSecondEq &&
+            i > 0 && results[i - 1].type === 'equation' && !results[i - 1].isSecondEq) {
+          breakAt = i - 1;
+        }
+        starts.push(breakAt);
+        rowCount = (i - breakAt) + 1;
         if (d !== '') pageDistrict = d;
       } else {
         rowCount++;
@@ -2380,7 +2401,7 @@
          <span${eqBlack}>${p.cityCode    ? esc(p.cityCode)        : ''}</span>
          <span style="text-align:right;${pmPrefixStyle}">${hasPmPrefix ? esc(p.pmPrefix) : ''}</span>
          <span style="text-align:center;">${esc(padMeasure(p.pmMeasure))}</span>
-         <span style="justify-self:start;">${p.pmSuffix === 'E' ? 'E' : ''}</span>
+         <span style="justify-self:start;">${p.type === 'equation' ? (p.isSecondEq && p.pmSuffix !== 'L' ? 'E' : '') : (p.pmSuffix === 'E' ? 'E' : '')}</span>
          ${hgAndF}
          ${isEq1 ? '' : `<span style="display:block;text-align:center;">${p.crossRouteFormatted ? '------->' : p.hasCrossRoute ? '*P*' : p.featureType !== 'R' && p.featureType !== 'I' && length !== '' ? padMeasure(length) : ''}</span>`}
          ${isEq1 ? '' : `<span style="text-align:left;">${p.desc ? (isIABoundary ? esc(p.desc).replace(/\b(RIGHT|LEFT)\b/, '<strong>$1</strong>') : esc(p.desc)) : ''}</span>`}
@@ -2425,7 +2446,7 @@
       <td${eqBlack}>${p.cityCode  ? esc(p.cityCode)         : ''}</td>
       <td style="text-align:right;${pmPrefixStyle}">${hasPmPrefix ? esc(p.pmPrefix) : ''}</td>
       <td style="text-align:center">${esc(padMeasure(p.pmMeasure))}</td>
-      <td>${p.pmSuffix === 'E' ? 'E' : ''}</td>
+      <td>${p.type === 'equation' ? (p.isSecondEq && p.pmSuffix !== 'L' ? 'E' : '') : (p.pmSuffix === 'E' ? 'E' : '')}</td>
       ${isEq1
         ? `<td colspan="4" style="text-align:left">EQUATES TO</td>`
         : `<td${hgFStyle}>${isIndAlignEq2 ? 'E' : p.pmSuffix === 'L' ? 'L' : p.hwyGroup ? esc(p.hwyGroup) : ''}</td>
