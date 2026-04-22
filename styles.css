@@ -28,6 +28,24 @@
       width: auto;
     }
 
+    .ssor-label {
+      position: absolute;
+      top: calc(1.25rem + 52px + 4px);
+      left: 0;
+      width: 300px;
+      text-align: center;
+      font-size: 0.65rem;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      color: #374151;
+    }
+
+    .ssor-highlight {
+      border: 1.5px solid #16a34a;
+      padding: 0 2px;
+      border-radius: 2px;
+    }
+
     .page-header {
       display: flex;
       flex-direction: row;
@@ -515,6 +533,7 @@
       align-items: center;
       gap: 0.5rem;
       padding: 1rem 0 1rem;
+      margin-top: 1.5rem;
     }
     .mode-selector-box {
       border: 1px solid #d1d5db;
@@ -993,7 +1012,7 @@
     @media print {
       body { background: none; padding: 0; }
       .card { box-shadow: none !important; padding: 0; }
-      .caltrans-logo, #modeSelector, .page-header, #loginPrompt, #routeForm, #appForm, #districtRouteForm,
+      .caltrans-logo, .ssor-label, #modeSelector, .page-header, #loginPrompt, #routeForm, #appForm, #districtRouteForm,
       #controlsGrid, .report-action-bar, .pagination-left, .pagination-right, .page-info,
       .generated-on { display: none !important; }
       .hsl-print-header { display: block; text-align: center; margin-bottom: 0.5rem; }
