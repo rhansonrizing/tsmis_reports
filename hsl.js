@@ -1214,9 +1214,7 @@
     if (county != null) {
       const normalizedCounty = normalizeCountyCode(county);
       if (normalizedCounty) {
-        const before = pairs.length;
         pairs = pairs.filter(p => p.county === normalizedCounty);
-        // filtered;
       }
     }
 
@@ -2111,7 +2109,6 @@
         hsl_showRampResults('error', 'Translation failed for both R and L alignments.');
         return;
       }
-      const routeSuffix = from.routeSuffix === '.' ? '' : from.routeSuffix;
       const paddedRouteNum = from.routeNum.padStart(3, '0');
       const [rampPairs, landmarkPairs, routeBreakPairs, { pairs: intersectionPairs, unresolved: unresolvedIntersections }, equationPairs, cityBeginPairs, countyBeginPairs, iaBoundaryPairs, direction] = await Promise.all([
         queryAttributeSet(segments),
@@ -2277,7 +2274,7 @@
         type:        p.type,
         routeId:     p.routeId   ?? null,
         arMeasure:   p.arMeasure ?? null,
-        featureType: p.type === 'equation' ? 'H' : p.type === 'landmark' ? 'H' : p.type === 'routebreak' ? 'H' : p.type === 'citybegin' ? 'H' : p.type === 'cityend' ? 'H' : p.type === 'citybreak' ? 'H' : p.type === 'cityresume' ? 'H' : p.type === 'countybegin' ? 'H' : p.type === 'countyend' ? 'H' : p.type === 'intersection' ? 'I' : 'R',
+        featureType: p.type === 'intersection' ? 'I' : p.type === 'ramp' ? 'R' : 'H',
         isCross:             p.isCross ?? false,
         crossRouteFormatted: p.crossRouteFormatted ?? false,
         hasCrossRoute:       (p.crossRouteFormatted ?? false) || p.crossPmMeasure != null,
@@ -2956,9 +2953,7 @@
   function hsl_exportToExcel() {
     if (_allResults.length === 0) return;
     const headers = ['County', 'City', '', 'PM', '', 'HG', 'FT', 'Distance To Next Point', 'Description'];
-    // TODO: hsl_printAll and hsl_exportToExcel both call hsl_computeLengths independently.
-    // Consider sharing _hslLengths (already cached for the screen view) instead of recomputing here.
-    const lengths = hsl_computeLengths(_allResults);
+    const lengths = _hslLengths ?? hsl_computeLengths(_allResults);
     const rows = _allResults.map((p, i) => {
       const length = lengths[i];
       return [

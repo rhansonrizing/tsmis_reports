@@ -11,6 +11,7 @@
   let _allRouteIds        = new Set(); // pre-fetched AllRoads RouteIDs from layer 116
   let _routeDirectionCache = new Map(); // routeNum → { from, to }
   let _hslLengths        = null;       // cached result of hsl_computeLengths for current dataset
+  let _hslPageStarts     = null;       // cached result of hsl_computePageStarts for current dataset
   let _countyNameToCode  = new Map(); // county name → 3-letter County_Code for layer 151
   let _generatedOn   = '';
 
@@ -783,8 +784,6 @@ async function loadCountyCodeDomain() {
     // "INDEP ALIGN", "IND ALIGN" (abbreviated form without the 'EP'), "INDEPENDENT ALIGNMENT".
     const isIABoundaryRec = p => p.type === 'landmark' && p.desc && /IND.*ALIGN/i.test(p.desc);
 
-    const fmtP = p => `[${p.pmSuffix??'?'}|hg=${p.hgValue??'-'}|ar=${p.arMeasure?.toFixed(3)??'?'}] ${p.desc??p.type}`;
-
     // Records absorbed by a section's tail scan so the outer loop can skip them.
     const absorbedRecs = new Set();
     // R/L-suffix IA boundary records (e.g. BEGIN LEFT INDEPENDENT ALIGNMENT) that
@@ -844,7 +843,6 @@ async function loadCountyCodeDomain() {
                   // Collect ALL IA boundary records (both dot-sfx and R/L-sfx) so
                   // they can be unconditionally absorbed into this section below.
                   peekedIABounds.push(pk);
-                  console.log(`[sortIA] peek collected IA bound: ${fmtP(pk)}`);
                   peekK++; continue;
                 }
                 if (Math.round(pk.arMeasure * 1000) === eq2Ar3dp &&
@@ -867,7 +865,6 @@ async function loadCountyCodeDomain() {
                   if (tr.type === 'equation') { k++; continue; }
                   if (isIABoundaryRec(tr)) {
                     // Absorb all IA boundary records into the section.
-                    console.log(`[sortIA] tail scan absorbed IA bound: ${fmtP(tr)}`);
                     tailSection.push(tr); absorbedRecs.add(tr);
                     k++; continue;
                   }
@@ -932,10 +929,7 @@ async function loadCountyCodeDomain() {
             // sub-sections and belongs in the section's trailing bucket.
             // Stop immediately if the record is an IA boundary (BEGIN/END INDEP ALIGN)
             // — these mark the edge of the alignment span, not inter-group filler.
-            if (isIABoundaryRec(cur)) {
-              console.log(`[sortIA] section inner-loop break at IA bound: ${fmtP(cur)}`);
-              break;
-            }
+            if (isIABoundaryRec(cur)) break;
             // Stop immediately if the record's own county differs from the section's
             // trigger county — independent alignments do not span county boundaries.
             if (cur.county && sectionCounty && cur.county !== sectionCounty) break;
@@ -987,7 +981,6 @@ async function loadCountyCodeDomain() {
             if (!isIABoundaryRec(trailing)) break;
             if (absorbedRecs.has(trailing)) { lookK++; continue; }
             if (/\bBEG/i.test(trailing.desc)) break;
-            console.log(`[sortIA] post-section absorbed IA bound: ${fmtP(trailing)}`);
             tailSection.push(trailing); absorbedRecs.add(trailing); lookK++;
           }
         }
@@ -1005,15 +998,6 @@ async function loadCountyCodeDomain() {
         const eGroup   = allSec.filter(p => p.pmSuffix === 'E' && p.type !== 'equation');
         const dotGroup = allSec.filter(p => p.pmSuffix !== 'R' && p.pmSuffix !== 'L' && p.pmSuffix !== 'E' && !isRtIA(p) && !isLtIA(p));
         const rUnconf  = allSec.filter(p => p.pmSuffix === 'R' && p.hgValue !== 'R' && p.alignment !== 'R');
-        const secHasIA = allSec.some(isIABoundaryRec);
-        if (secHasIA) {
-          const trigger = main[j];
-          console.log(`[sortIA] section trigger: ${fmtP(trigger)}`);
-          console.log(`[sortIA]   rGroup(${rGroup.length}): ${rGroup.map(fmtP).join(' | ')}`);
-          console.log(`[sortIA]   lGroup(${lGroup.length}): ${lGroup.map(fmtP).join(' | ')}`);
-          console.log(`[sortIA]   dotGroup(${dotGroup.length}): ${dotGroup.map(fmtP).join(' | ')}`);
-          console.log(`[sortIA]   rUnconf(${rUnconf.length}): ${rUnconf.map(fmtP).join(' | ')}`);
-        }
         // R group: only R-suffix records confirmed on the R alignment by hgValue.
         // R-suffix records with empty hgValue are not confirmed as R-alignment and
         // go to the trailing bucket after the L group.
@@ -1032,12 +1016,8 @@ async function loadCountyCodeDomain() {
         if (isIABoundaryRec(rec) && (rec.pmSuffix === 'R' || rec.pmSuffix === 'L')) {
           // R/L-sfx IA boundary before its section trigger (e.g. BEGIN LEFT INDEPENDENT
           // ALIGNMENT before the first L ramp). Defer to flush into the next section.
-          console.log(`[sortIA] deferring pre-section IA bound: ${fmtP(rec)}`);
           deferredIABounds.push(rec);
           continue;
-        }
-        if (isIABoundaryRec(rec)) {
-          console.log(`[sortIA] outer-push IA bound: ${fmtP(rec)}`);
         }
         grouped.push(rec);
       }
@@ -1317,6 +1297,7 @@ async function loadCountyCodeDomain() {
     _directionFrom = '';
     _directionTo   = '';
     _hslLengths    = null;
+    _hslPageStarts = null;
   }
 
   async function queryRouteDirection(routeNum) {
