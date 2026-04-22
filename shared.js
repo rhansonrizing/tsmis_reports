@@ -763,6 +763,13 @@ async function loadCountyCodeDomain() {
           }
         }
       }
+      // County-end vs landmark at the same AR:
+      //   Same county   → landmark is a physical location in the ending county and sorts first
+      //                   (e.g. TRONA RD at the SBD/INY line belongs to SBD before the county-end).
+      //   Diff county   → landmark is a county-line marker for the incoming county (e.g. "BEGIN OF
+      //                   COUNTY" stored as COL/0.000 at the LAK/COL line) and sorts after the county-end.
+      if (a.type === 'countyend' && b.type === 'landmark') return a.county === b.county ? 1 : -1;
+      if (a.type === 'landmark' && b.type === 'countyend') return a.county === b.county ? -1 : 1;
       // Final tiebreaker: sort by PMMeasure ascending.
       // Exception: at a county boundary the PM resets (e.g. 24.750 → 0.000 at the same AR).
       // Detect this when one value is near-zero and the difference is large — in that case

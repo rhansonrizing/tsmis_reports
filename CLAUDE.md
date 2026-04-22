@@ -245,6 +245,7 @@ Phase 2: HG pre-fetch
   Assign p.hgValue = hgMap.get(p.name) for all pairs
 
 Phase 3: Sort pipeline
+  hsl_fixCountyLineLandmarks(unsortedPairs)   ← runs before sort so county fields are correct at sort time
   sortWithIndependentAlignments(unsortedPairs)
   → hsl_filterCityBoundaries(sorted)
   → hsl_filterRealignmentLandmarks(filtered)
@@ -486,6 +487,7 @@ Suppression tiers (lower tiers hidden when higher tier exists at same AR ± 0.00
 - Queries by RouteNum+ARMeasure range (not RouteID) so both P and S routes are captured in one clause.
 - Uses composite key `"Landmarks_Short|ARMeasure"` as `pair.name` to allow multiple identical names at different ARs.
 - BEGIN/END REALIGNMENT landmarks get the pmPrefix embedded in desc (e.g., `"BEGIN R REALIGNMENT"`).
+- **No county filter applied** — county-line landmarks (e.g. TRONA RD stored as `county=INY` at the SBD/INY boundary) must be returned even when the report is scoped to a specific county. The district filter + AR range is sufficient; `hsl_fixCountyLineLandmarks` corrects the county/PM display.
 - All results AR→OD translated (network 4→5).
 
 ### queryRouteBreaks (layer 133)
@@ -705,11 +707,23 @@ When two equation-pair records have the same AR to 3dp, the AR-based sort may pu
 ### Full Pipeline After Sort
 
 ```
+hsl_fixCountyLineLandmarks(unsortedPairs)
+  Runs BEFORE sort so county fields are authoritative at sort time.
+  Reassigns county/PM of landmarks stored with the wrong county in layer 123
+  (e.g. TRONA RD stored as INY at the SBD/INY line → reassigned to SBD/14.778).
+  Guard: if a countybegin at the same AR has the same county as the landmark,
+  the landmark is correctly stored as the new county's beginning marker
+  (e.g. "BEGIN OF COUNTY" stored as COL/0.000) — skip reassignment.
+  ↓
 sortWithIndependentAlignments(unsortedPairs)
+  County-end vs landmark tiebreak (same AR):
+    Same county  → landmark sorts first (physical location in ending county, e.g. TRONA RD)
+    Diff county  → countyend sorts first (landmark is incoming county marker, e.g. "BEGIN OF COUNTY")
   ↓
 hsl_filterCityBoundaries(sorted)
   Drops citybegin/cityend/citybreak/cityresume records whose AR falls outside
   the non-city AR extent, whose ODMeasure < 0, or whose pmMeasure < 0.
+  Also suppresses countybegin records when a natural H landmark exists at the same PM.
   ↓
 hsl_filterRealignmentLandmarks(filtered)
   Removes BEGIN/END REALIGNMENT landmarks whose pmKey matches any other record.

@@ -108,34 +108,50 @@
       return true;
     });
 
-    // Drop orphaned countyend records whose countybegin was filtered out
-    // (county ended at/before report start, never began within the report range)
-    const countyCodesWithBegin = new Set(filtered.filter(p => p.type === 'countybegin').map(p => p.county));
-    const deOrphaned = filtered.filter(p => {
-      if (p.type !== 'countyend') return true;
-      if (countyCodesWithBegin.has(p.county)) return true;
-      return false;
-    });
-
-    // Suppress city boundary records that share a PM prefix+measure with any
-    // naturally-occurring H record (landmark, equation, routebreak). The city
-    // boundary is redundant — the road position is already annotated.
+    // Suppress city boundary records, and county BEGIN records, that share a
+    // PM prefix+measure with any naturally-occurring H record (landmark, equation,
+    // routebreak). County ends are never suppressed — they mark a real transition
+    // even when a natural record coincides.
     const normPfx = p => (p.pmPrefix === '.' ? '' : (p.pmPrefix ?? ''));
     const pmPrefixMeasure = p => {
       const m = parseFloat(p.pmMeasure);
       return `${normPfx(p)}|${isNaN(m) ? (p.pmMeasure ?? '') : m.toFixed(3)}`;
     };
     const naturalHKeys = new Set(
-      deOrphaned
+      filtered
         .filter(p => (p.type === 'landmark' || p.type === 'equation' || p.type === 'routebreak') &&
                      p.pmMeasure !== '' && p.pmMeasure != null && !isNaN(parseFloat(p.pmMeasure)))
         .map(pmPrefixMeasure)
     );
-    return deOrphaned.filter(p => {
-      if (!isCityType(p.type)) return true;
+    return filtered.filter(p => {
+      if (!isCityType(p.type) && p.type !== 'countybegin') return true;
       if (p.pmMeasure === '' || p.pmMeasure == null || isNaN(parseFloat(p.pmMeasure))) return true;
       return !naturalHKeys.has(pmPrefixMeasure(p));
     });
+  }
+
+  // Reassigns county/PM for landmarks that sit at the same AR as a countyend
+  // record but were stored in the next county by the source data.  At a county
+  // line the landmark physically belongs to the "before" county; the countyend
+  // record is the authoritative source for the correct county code and PM.
+  function hsl_fixCountyLineLandmarks(pairs) {
+    const countyEnds   = pairs.filter(p => p.type === 'countyend'   && p.arMeasure != null);
+    const countyBegins = pairs.filter(p => p.type === 'countybegin' && p.arMeasure != null);
+    for (const p of pairs) {
+      if (p.type !== 'landmark' || p.arMeasure == null) continue;
+      const match = countyEnds.find(e => Math.abs(e.arMeasure - p.arMeasure) < 0.001 && e.county !== p.county);
+      if (!match) continue;
+      // If a countybegin at the same AR shares the landmark's county, the landmark is
+      // correctly stored as the beginning marker of the new county (e.g. "BEGIN OF COUNTY"
+      // stored as county=COL, PM=0 at the LAK/COL boundary). Don't reassign it.
+      const protectedByBegin = countyBegins.some(b => Math.abs(b.arMeasure - p.arMeasure) < 0.001 && b.county === p.county);
+      if (protectedByBegin) continue;
+      p.county    = match.county;
+      p.pmMeasure = match.pmMeasure;
+      p.pmPrefix  = match.pmPrefix  ?? '';
+      p.pmSuffix  = match.pmSuffix  ?? '.';
+    }
+    return pairs;
   }
 
   // Applies the suppression hierarchy for synthetic boundary records after all
@@ -216,11 +232,13 @@
       : ` AND (RouteSuffix IS NULL OR RouteSuffix = '.')`;
     const dateFilter     = getDateFilter();
     const districtFilter = district != null ? ` AND District = ${parseInt(district, 10)}` : '';
-    const resolvedCounty = normalizeCountyCode(county);
-    const countyFilter    = resolvedCounty != null ? ` AND County = '${resolvedCounty.replace(/'/g, "''")}'` : '';
+    // No county filter — county-line landmarks (e.g. TRONA RD stored as INY at the SBD/INY
+    // boundary) must be returned even when the report is scoped to a specific county.
+    // The district filter + AR range is sufficient to scope results; hsl_fixCountyLineLandmarks
+    // corrects the county/PM display of any mis-attributed boundary landmarks.
     const where = uniqueClauses.length === 1
-      ? uniqueClauses[0].slice(1, -1) + suffixFilter + districtFilter + countyFilter + ' AND LRSToDate IS NULL' + dateFilter
-      : `(${uniqueClauses.join(' OR ')})${suffixFilter}${districtFilter}${countyFilter} AND LRSToDate IS NULL${dateFilter}`;
+      ? uniqueClauses[0].slice(1, -1) + suffixFilter + districtFilter + ' AND LRSToDate IS NULL' + dateFilter
+      : `(${uniqueClauses.join(' OR ')})${suffixFilter}${districtFilter} AND LRSToDate IS NULL${dateFilter}`;
     const body = new URLSearchParams({
       where,
       outFields:      'Landmarks_Short,Landmarks_Long,RouteID,ARMeasure,County,RouteSuffix,PMPrefix,PMSuffix,PMMeasure,District,Alignment,InventoryItemStartDate,InventoryItemEndDate',
@@ -1131,7 +1149,7 @@
           name:        `kb_${a.RouteID}_${a.FromARMeasure}`,
           desc:        countyCode ? `COUNTY BEGIN: ${countyCode}` : 'COUNTY BEGIN',
           routeId:     a.RouteID,
-          arMeasure:   a.FromARMeasure,
+          arMeasure:   (a.FromARMeasure < 0 && a.FromARMeasure > -0.001) ? 0 : a.FromARMeasure,
           county:      countyCode,
           routeSuffix: '',
           pmPrefix:    '',
@@ -1957,7 +1975,12 @@
       _routeLabel    = paddedRoute;
       _directionFrom = direction.from;
       _directionTo   = direction.to;
-      const unsortedPairs = [...rampPairs, ...landmarkPairs, ...routeBreakPairs, ...intersectionPairs, ...equationPairs, ...cityBeginPairs, ...countyBeginPairs, ...iaBoundaryPairs];
+      const dataPairs1 = [...rampPairs, ...landmarkPairs, ...routeBreakPairs, ...intersectionPairs, ...equationPairs, ...cityBeginPairs, ...countyBeginPairs];
+      const dataArVals1 = dataPairs1.map(p => p.arMeasure).filter(v => v != null && isFinite(v));
+      const dataArMin1  = dataArVals1.length ? Math.min(...dataArVals1) - 0.01 : -Infinity;
+      const dataArMax1  = dataArVals1.length ? Math.max(...dataArVals1) + 0.01 :  Infinity;
+      const unsortedPairs = [...dataPairs1, ...iaBoundaryPairs.filter(p => p.arMeasure != null && p.arMeasure >= dataArMin1 && p.arMeasure <= dataArMax1)];
+      hsl_fixCountyLineLandmarks(unsortedPairs);
       const hgMap = await queryRangeLayer(unsortedPairs, 116, 'Highway_Group');
       for (const p of unsortedPairs) p.hgValue = hgMap.get(p.name) ?? '';
       const allPairs = fixEqPairOrder(hsl_filterRealignmentLandmarks(hsl_filterCityBoundaries(sortWithIndependentAlignments(unsortedPairs))));
@@ -2124,7 +2147,12 @@
       _routeLabel    = paddedRouteNum;
       _directionFrom = direction.from;
       _directionTo   = direction.to;
-      const unsortedPairs = [...rampPairs, ...landmarkPairs, ...routeBreakPairs, ...intersectionPairs, ...equationPairs, ...cityBeginPairs, ...countyBeginPairs, ...iaBoundaryPairs];
+      const dataPairs2 = [...rampPairs, ...landmarkPairs, ...routeBreakPairs, ...intersectionPairs, ...equationPairs, ...cityBeginPairs, ...countyBeginPairs];
+      const dataArVals2 = dataPairs2.map(p => p.arMeasure).filter(v => v != null && isFinite(v));
+      const dataArMin2  = dataArVals2.length ? Math.min(...dataArVals2) - 0.01 : -Infinity;
+      const dataArMax2  = dataArVals2.length ? Math.max(...dataArVals2) + 0.01 :  Infinity;
+      const unsortedPairs = [...dataPairs2, ...iaBoundaryPairs.filter(p => p.arMeasure != null && p.arMeasure >= dataArMin2 && p.arMeasure <= dataArMax2)];
+      hsl_fixCountyLineLandmarks(unsortedPairs);
       const hgMap = await queryRangeLayer(unsortedPairs, 116, 'Highway_Group');
       for (const p of unsortedPairs) p.hgValue = hgMap.get(p.name) ?? '';
       const allPairs = fixEqPairOrder(hsl_filterRealignmentLandmarks(hsl_filterCityBoundaries(sortWithIndependentAlignments(unsortedPairs))));
@@ -2361,6 +2389,7 @@
     return results.map((p, i) => {
       if (p.type === 'equation' && !p.isSecondEq) return '';
       if (p.type === 'routebreak' && p.desc === 'Route Break') return '';
+      if (p.type === 'countyend') return '0.000';
       const curOd = parseFloat(p.odMeasure);
       const isExcluded = r =>
         (r.type === 'equation' && !r.isSecondEq) ||
