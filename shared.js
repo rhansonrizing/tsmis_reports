@@ -669,7 +669,7 @@ async function loadCountyCodeDomain() {
       // intersection's PM position, so the diff===0 pmKey tiebreak below never fires.
       // Only applies when the PM key matches; otherwise fall through to normal AR sort.
       if (diff !== 0) {
-        const isCityBoundary = t => t === 'citybegin' || t === 'cityend' || t === 'citybreak' || t === 'cityresume';
+        const isCityBoundary = t => t === 'citybegin' || t === 'cityend';
         const isIorR         = t => t === 'intersection' || t === 'ramp';
         if ((isCityBoundary(a.type) && isIorR(b.type)) || (isCityBoundary(b.type) && isIorR(a.type))) {
           const normKey = p => `${p.pmPrefix === '.' ? '' : (p.pmPrefix ?? '')}|${isNaN(parseFloat(p.pmMeasure)) ? p.pmMeasure : parseFloat(p.pmMeasure).toFixed(3)}|${p.pmSuffix}`;
@@ -702,7 +702,7 @@ async function loadCountyCodeDomain() {
       if (pmKey(a) === pmKey(b)) {
         const ftOf = p => {
           if (p.type === 'equation' || p.type === 'landmark' || p.type === 'routebreak' ||
-              p.type === 'citybegin' || p.type === 'cityend' || p.type === 'citybreak' || p.type === 'cityresume') return 0; // H
+              p.type === 'citybegin' || p.type === 'cityend') return 0; // H
           if (p.type === 'intersection') return 1;                       // I
           return 2;                                                       // R (ramp)
         };
@@ -802,7 +802,9 @@ async function loadCountyCodeDomain() {
     while (i < main.length) {
       // Skip records already absorbed into a preceding section's tail scan.
       if (absorbedRecs.has(main[i])) { i++; continue; }
-      if ((main[i].pmSuffix === 'R' || main[i].pmSuffix === 'L') && !isIABoundaryRec(main[i])) {
+      if ((main[i].pmSuffix === 'R' || main[i].pmSuffix === 'L') && !isIABoundaryRec(main[i]) &&
+          main[i].type !== 'countybegin' && main[i].type !== 'countyend' &&
+          main[i].type !== 'citybegin'   && main[i].type !== 'cityend') {
         const j = i;
         // County of the trigger record — used to prevent records from a different
         // county's independent alignment from being bundled into this section.
@@ -980,15 +982,30 @@ async function loadCountyCodeDomain() {
         // No county guard — IA END records legitimately appear at county lines.
         {
           let lookK = i;
+          let lastIaEndAr = null;
           while (lookK < main.length) {
             const trailing = main[lookK];
-            const isCityBound = trailing.type === 'citybegin' || trailing.type === 'cityend' ||
-                                trailing.type === 'citybreak' || trailing.type === 'cityresume';
+            const isCityBound = trailing.type === 'citybegin' || trailing.type === 'cityend';
             if (isCityBound) { lookK++; continue; }
-            if (!isIABoundaryRec(trailing)) break;
             if (absorbedRecs.has(trailing)) { lookK++; continue; }
-            if (/\bBEG/i.test(trailing.desc)) break;
-            tailSection.push(trailing); absorbedRecs.add(trailing); lookK++;
+            if (isIABoundaryRec(trailing)) {
+              if (/\bBEG/i.test(trailing.desc)) break;
+              tailSection.push(trailing); absorbedRecs.add(trailing);
+              lastIaEndAr = trailing.arMeasure;
+              lookK++; continue;
+            }
+            // After absorbing IA END records, also absorb any records within a small
+            // AR window. This prevents an L-alignment END REALIGNMENT (or its
+            // accompanying dot-suffix delimiter) that sorts slightly after the IA END
+            // boundaries from triggering a runaway section that swallows all subsequent
+            // records into its dotGroup.
+            if (lastIaEndAr != null &&
+                trailing.arMeasure != null && !isNaN(trailing.arMeasure) &&
+                Math.abs(trailing.arMeasure - lastIaEndAr) <= 0.5) {
+              if (trailing.county && sectionCounty && trailing.county !== sectionCounty) break;
+              tailSection.push(trailing); absorbedRecs.add(trailing); lookK++; continue;
+            }
+            break;
           }
         }
         // Flush deferred pre-section R/L-sfx IA bounds (e.g. BEGIN LEFT INDEPENDENT
@@ -1075,7 +1092,7 @@ async function loadCountyCodeDomain() {
       // to the *arriving* PM system and would give the wrong signal if used as
       // pairs[i-1]/pairs[i+2] directly.
       const isHCtx = p => p.type === 'landmark' || p.type === 'routebreak' ||
-                          p.type === 'citybegin' || p.type === 'cityend' || p.type === 'citybreak' || p.type === 'cityresume';
+                          p.type === 'citybegin' || p.type === 'cityend';
       let prevPfx = null;
       for (let k = i - 1; k >= 0; k--) {
         if (!isHCtx(pairs[k])) continue;

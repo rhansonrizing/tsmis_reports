@@ -81,7 +81,7 @@ Suppressed (not prepended to the list) if **any FT=H record** in `allPairs` has 
 
 ### City Begin/End Records (`hsl_filterCityBoundaries`)
 
-Applied before the created begin/end check. Each `citybegin`, `cityend`, `citybreak`, and `cityresume` record is dropped if **any** of the following are true:
+Applied before the created begin/end check. Each `citybegin` and `cityend` record is dropped if **any** of the following are true:
 
 1. Its AR measure falls outside the non-city AR extent by more than **0.005** (removes out-of-district city records that leak through because layer 74 has no district field).
 2. Its OD measure is **negative**.
@@ -89,12 +89,7 @@ Applied before the created begin/end check. Each `citybegin`, `cityend`, `citybr
 
 City begin/end records are always displayed even when another H record shares the same PM key.
 
-Additionally, when a city spans multiple non-contiguous route segments, `hsl_deduplicateCitySegments` transforms intermediate endpoints rather than dropping them:
-- First `citybegin` (lowest AR) and last `cityend` (highest AR) are kept as-is.
-- Intermediate `cityend` records become type `citybreak` (desc: `CITY BREAK: <code>`).
-- Intermediate `citybegin` records become type `cityresume` (desc: `CITY RESUME: <code>`).
-
-For single-segment cities the records pass through unchanged.
+When a city spans multiple non-contiguous route segments, all intermediate `citybegin`/`cityend` records are kept as-is.
 
 City begin/end records on an **L independent alignment** (`EndPMSuffix === 'L'` or `BeginPMSuffix === 'L'`) are suppressed at source — the city boundary was already crossed on the main alignment before the split.
 

@@ -372,7 +372,7 @@ All pair objects share these base fields:
 
 ### City / County Boundary Objects
 ```javascript
-// type: 'citybegin'|'cityend'|'citybreak'|'cityresume'
+// type: 'citybegin'|'cityend'
 {
   type, name,        // "cb_routeId_arMeasure" or "ce_..." 
   desc,              // "CITY BEGIN: cityCode" etc.
@@ -476,7 +476,7 @@ Post-pipeline suppression pass applied **after** begin/end records have been ins
 Suppression tiers (lower tiers hidden when higher tier exists at same AR ± 0.001):
 1. `hsl_end_*` / `hsl_begin_*` — always shown
 2. `ia_bdry_*` — suppressed if tier 1 at same AR
-3. `citybegin|cityend|citybreak|cityresume` — suppressed if tier 1 or 2 at same AR
+3. `citybegin|cityend` — suppressed if tier 1 or 2 at same AR
 4. `countybegin|countyend` — suppressed if tier 1, 2, or 3 at same AR
 
 ---
@@ -487,7 +487,7 @@ Suppression tiers (lower tiers hidden when higher tier exists at same AR ± 0.00
 - Queries by RouteNum+ARMeasure range (not RouteID) so both P and S routes are captured in one clause.
 - Uses composite key `"Landmarks_Short|ARMeasure"` as `pair.name` to allow multiple identical names at different ARs.
 - BEGIN/END REALIGNMENT landmarks get the pmPrefix embedded in desc (e.g., `"BEGIN R REALIGNMENT"`).
-- **No county filter applied** — county-line landmarks (e.g. TRONA RD stored as `county=INY` at the SBD/INY boundary) must be returned even when the report is scoped to a specific county. The district filter + AR range is sufficient; `hsl_fixCountyLineLandmarks` corrects the county/PM display.
+- **County filter applied** — `AND County = '<code>'` included in WHERE when county is selected. Note: landmarks stored under the adjacent county at a county boundary (e.g. TRONA RD stored as `county=INY` at the SBD/INY line) will be excluded by this filter in county-scoped reports — accepted as a known data-quality limitation.
 - All results AR→OD translated (network 4→5).
 
 ### queryRouteBreaks (layer 133)
@@ -507,7 +507,7 @@ County is required — `queryEquationPointsFromNetwork` returns `[]` if county u
 - `BeginPMSuffix === 'L'` or `EndPMSuffix === 'L'` records are suppressed (city boundary already crossed on main alignment).
 - AR→PM (network 4→3) and AR→OD (network 4→5) translated. PM translation sets county from PM routeId.
 - County filter applied **post-translation** (not in WHERE, since a city range can span county boundary).
-- Deduplicated by city code via `hsl_deduplicateCitySegments`.
+- When a city code appears in multiple non-contiguous segments, all intermediate `citybegin`/`cityend` records are kept as-is (no break/resume conversion).
 
 ### queryCountyBegins (layer 85)
 - _P routes only; county boundaries on L alignments excluded.
@@ -721,7 +721,7 @@ sortWithIndependentAlignments(unsortedPairs)
     Diff county  → countyend sorts first (landmark is incoming county marker, e.g. "BEGIN OF COUNTY")
   ↓
 hsl_filterCityBoundaries(sorted)
-  Drops citybegin/cityend/citybreak/cityresume records whose AR falls outside
+  Drops citybegin/cityend records whose AR falls outside
   the non-city AR extent, whose ODMeasure < 0, or whose pmMeasure < 0.
   Also suppresses countybegin records when a natural H landmark exists at the same PM.
   ↓
@@ -772,23 +772,6 @@ OD 10.2  Ramp B  (pmSuffix=L)
 OD 10.4  Ramp D  (pmSuffix=L)
 OD 10.5  End     (pmSuffix=E)
 ```
-
----
-
-## City Segment Deduplication (`hsl_deduplicateCitySegments`)
-
-When a city code appears in multiple non-contiguous segments on the same route, intermediate endpoints are converted (not dropped):
-
-| Position | Original type | New type | New desc |
-|----------|--------------|----------|---------|
-| First record (lowest AR) | `citybegin` | `citybegin` | unchanged |
-| Intermediate exit | `cityend` | `citybreak` | `CITY BREAK: <code>` |
-| Intermediate re-entry | `citybegin` | `cityresume` | `CITY RESUME: <code>` |
-| Last record (highest AR) | `cityend` | `cityend` | unchanged |
-
-Single-segment cities pass through unchanged. All four types (`citybegin`, `cityend`, `citybreak`, `cityresume`) are treated identically by `hsl_filterCityBoundaries` (AR extent / OD / PM range checks) and by the render pipeline (`featureType='H'`, `hsl-item-cb` row class, `cityCode` read directly from the record).
-
-City begin/end records on an L independent alignment are suppressed at source in `hsl_queryCityBoundaries` (`BeginPMSuffix === 'L'` or `EndPMSuffix === 'L'`) — the city boundary was already crossed on the main alignment before the split.
 
 ---
 

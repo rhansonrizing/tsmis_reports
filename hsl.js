@@ -34,8 +34,7 @@
     const isNaturalH = p => !isRealignment(p) && !isIABoundary(p) &&
       p.type !== 'intersection' && p.type !== 'ramp' &&
       p.type !== 'countybegin' && p.type !== 'countyend' &&
-      p.type !== 'citybegin'   && p.type !== 'cityend'   &&
-      p.type !== 'citybreak'   && p.type !== 'cityresume';
+      p.type !== 'citybegin'   && p.type !== 'cityend';
     const naturalPmKeys = new Set(
       pairs
         .filter(p => isNaturalH(p) && p.pmMeasure !== '' && p.pmMeasure != null && !isNaN(parseFloat(p.pmMeasure)))
@@ -90,7 +89,7 @@
   }
 
   function hsl_filterCityBoundaries(pairs) {
-    const isCityType   = t => t === 'citybegin' || t === 'cityend' || t === 'citybreak' || t === 'cityresume';
+    const isCityType   = t => t === 'citybegin' || t === 'cityend';
     const isCountyType = t => t === 'countybegin' || t === 'countyend';
     const isBoundaryType = t => isCityType(t) || isCountyType(t);
     const nonCityArs = pairs
@@ -166,7 +165,7 @@
     const AR_TOL       = 0.001;
     const isHslTerminal = p => p.name?.startsWith('hsl_end_') || p.name?.startsWith('hsl_begin_');
     const isIABdry      = p => p.name?.startsWith('ia_bdry_');
-    const isCityType    = p => p.type === 'citybegin' || p.type === 'cityend' || p.type === 'citybreak' || p.type === 'cityresume';
+    const isCityType    = p => p.type === 'citybegin' || p.type === 'cityend';
     const isCountyType  = p => p.type === 'countybegin' || p.type === 'countyend';
     const arOf          = p => (p.arMeasure != null && !isNaN(p.arMeasure)) ? p.arMeasure : null;
     const anyWithin     = (ars, ar) => ars.some(a => Math.abs(a - ar) < AR_TOL);
@@ -232,13 +231,11 @@
       : ` AND (RouteSuffix IS NULL OR RouteSuffix = '.')`;
     const dateFilter     = getDateFilter();
     const districtFilter = district != null ? ` AND District = ${parseInt(district, 10)}` : '';
-    // No county filter — county-line landmarks (e.g. TRONA RD stored as INY at the SBD/INY
-    // boundary) must be returned even when the report is scoped to a specific county.
-    // The district filter + AR range is sufficient to scope results; hsl_fixCountyLineLandmarks
-    // corrects the county/PM display of any mis-attributed boundary landmarks.
+    const resolvedCounty = normalizeCountyCode(county);
+    const countyFilter   = resolvedCounty != null ? ` AND County = '${resolvedCounty.replace(/'/g, "''")}'` : '';
     const where = uniqueClauses.length === 1
-      ? uniqueClauses[0].slice(1, -1) + suffixFilter + districtFilter + ' AND LRSToDate IS NULL' + dateFilter
-      : `(${uniqueClauses.join(' OR ')})${suffixFilter}${districtFilter} AND LRSToDate IS NULL${dateFilter}`;
+      ? uniqueClauses[0].slice(1, -1) + suffixFilter + districtFilter + countyFilter + ' AND LRSToDate IS NULL' + dateFilter
+      : `(${uniqueClauses.join(' OR ')})${suffixFilter}${districtFilter}${countyFilter} AND LRSToDate IS NULL${dateFilter}`;
     const body = new URLSearchParams({
       where,
       outFields:      'Landmarks_Short,Landmarks_Long,RouteID,ARMeasure,County,RouteSuffix,PMPrefix,PMSuffix,PMMeasure,District,Alignment,InventoryItemStartDate,InventoryItemEndDate',
@@ -617,7 +614,7 @@
     const resolvedCounty = county ? normalizeCountyCode(county) : null;
     if (!resolvedCounty) return []; // county required to scope PM routeId lookup
     const routePrefix = `${resolvedCounty}${routeNumDigits}`;
-    const where = `NetworkId = 2 AND RouteId LIKE '${routePrefix}%'`;
+    const where = `NetworkId = 2 AND RouteId LIKE '${routePrefix}%'${getDateFilter('LRSFromDate', 'LRSToDate')}`;
 
     const body = new URLSearchParams({
       where,
@@ -682,6 +679,8 @@
                     ?? arXlated.find(r => r.measure != null);
       const arMeasure = arResult?.measure ?? null;
       if (arMeasure == null || arMeasure < segArMin || arMeasure > segArMax) return;
+      const arRouteNum = arResult.routeId?.match(/^SHS_(\d+)/)?.[1];
+      if (!arRouteNum || parseInt(arRouteNum, 10) !== parseInt(routeNumDigits, 10)) return;
 
       const odXlated = (odData.locations ?? [])[idx]?.translatedLocations ?? [];
       const odResult = odXlated.find(r => r.measure != null && r.routeId?.includes(routeNumDigits))
@@ -747,6 +746,8 @@
       // Sort by AR ascending: lower AR = eq1, higher AR = eq2.
       const [p1, p2] = [...byPm.values()].sort((a, b) => a.arMeasure - b.arMeasure);
 
+      if (p2.arMeasure - p1.arMeasure > 1) continue;
+
       const iIsIndL = p1.pmSuffix === 'L';
       const jIsIndL = p2.pmSuffix === 'L';
       if (iIsIndL !== jIsIndL) {
@@ -810,12 +811,14 @@
         if (arDiff > 0.005) break;
         const iIsIndL = points[i].pmSuffix === 'L';
         const jIsIndL = points[j].pmSuffix === 'L';
-        if (iIsIndL !== jIsIndL) {
-          continue;
-        }
-        if (parseFloat(points[i].pmMeasure).toFixed(3) === parseFloat(points[j].pmMeasure).toFixed(3)) {
-          continue;
-        }
+        if (iIsIndL !== jIsIndL) continue;
+        if (parseFloat(points[i].pmMeasure).toFixed(3) === parseFloat(points[j].pmMeasure).toFixed(3)) continue;
+        // Require matching OD to 3dp — two calibration points at the same physical
+        // location must translate to the same OD. Mismatched OD means these are
+        // independent points that happen to be close in AR, not an equation pair.
+        const od1 = parseFloat(points[i].odMeasure);
+        const od2 = parseFloat(points[j].odMeasure);
+        if (isNaN(od1) || isNaN(od2) || od1.toFixed(3) !== od2.toFixed(3)) continue;
         const dupThreshold = (iIsIndL && jIsIndL) ? 0.01 : 0.5;
         if (arDiff < 0.0005 && pmDiff < dupThreshold) {
           continue;
@@ -1042,51 +1045,7 @@
       filtered = filtered.filter(p => !p.district || p.district === districtStr);
     }
 
-    return hsl_deduplicateCitySegments(filtered);
-  }
-
-  /**
-   * For cities that appear in multiple non-contiguous segments on the same route:
-   * - Keep the first citybegin (lowest arMeasure) and last cityend (highest arMeasure) as-is.
-   * - Convert intermediate cityend records â†’ type 'citybreak'  (desc: "CITY BREAK: <code>").
-   * - Convert intermediate citybegin records â†’ type 'cityresume' (desc: "CITY RESUME: <code>").
-   * For cities with a single contiguous segment, records pass through unchanged.
-   */
-  function hsl_deduplicateCitySegments(pairs) {
-    // Group citybegin/cityend records by cityCode, sorted by arMeasure.
-    const cityGroups = new Map(); // cityCode â†’ [records sorted by arMeasure]
-    for (const p of pairs) {
-      if (p.type === 'citybegin' || p.type === 'cityend') {
-        if (!cityGroups.has(p.cityCode)) cityGroups.set(p.cityCode, []);
-        cityGroups.get(p.cityCode).push(p);
-      }
-    }
-
-    // Build name â†’ new type for records that need to change.
-    const typeOverride = new Map(); // name â†’ new type string
-    for (const [, records] of cityGroups) {
-      if (records.length <= 2) continue; // Single segment â€” nothing to transform.
-      records.sort((a, b) => a.arMeasure - b.arMeasure);
-      records.forEach((r, i) => {
-        if (i === 0)                    typeOverride.set(r.name, 'citybegin');
-        else if (i === records.length - 1) typeOverride.set(r.name, 'cityend');
-        else if (r.type === 'cityend')  typeOverride.set(r.name, 'citybreak');
-        else                            typeOverride.set(r.name, 'cityresume');
-      });
-    }
-
-    if (typeOverride.size === 0) return pairs;
-
-    return pairs.map(p => {
-      if (p.type !== 'citybegin' && p.type !== 'cityend') return p;
-      const newType = typeOverride.get(p.name);
-      if (!newType || newType === p.type) return p;
-      const cityCode = p.cityCode ?? '';
-      const desc = newType === 'citybreak'  ? (cityCode ? `CITY BREAK: ${cityCode}`  : 'CITY BREAK')
-                 : newType === 'cityresume' ? (cityCode ? `CITY RESUME: ${cityCode}` : 'CITY RESUME')
-                 : p.desc;
-      return { ...p, type: newType, desc };
-    });
+    return filtered;
   }
 
   /** Returns synthetic “COUNTY BEGIN/END” records from layer 85 field County_Code.
@@ -1743,6 +1702,7 @@
 
     const headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
     let beginArMeasure = null;
+    let beginDesc = 'BEGIN ROUTE';
 
     // Build segment OR clauses (same pattern as hsl_queryEndRecord)
     const segClauses = segments.map(({ fromBest, toBest }) => {
@@ -1753,6 +1713,7 @@
     });
 
     if (district != null) {
+      beginDesc = 'BEGIN OF DISTRICT';
       // â”€â”€ Layer 114: district boundary â€” minimum FromARMeasure â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       const districtNum = parseInt(district, 10);
       const body = new URLSearchParams({
@@ -1801,7 +1762,11 @@
             const best = pool.reduce((b, f) =>
               (f.attributes?.FromARMeasure ?? Infinity) < (b?.attributes?.FromARMeasure ?? Infinity) ? f : b, null);
             if (best?.attributes?.FromARMeasure != null) {
-              beginArMeasure = Math.max(beginArMeasure, best.attributes.FromARMeasure);
+              const countyFrom = best.attributes.FromARMeasure;
+              if (countyFrom >= beginArMeasure) {
+                beginArMeasure = countyFrom;
+                beginDesc = `COUNTY BEGIN: ${countyCode}`;
+              }
             }
           } else {
             console.error(`[hsl_queryBeginRecord] layer 85 (county floor) error ${data85.error.code}: ${data85.error.message}`);
@@ -1812,6 +1777,7 @@
       }
 
     } else if (county != null) {
+      beginDesc = `COUNTY BEGIN: ${normalizeCountyCode(county)}`;
       // â”€â”€ Layer 85: county boundary â€” minimum FromARMeasure (county-only) â”€â”€â”€â”€â”€â”€
       const countyCode = normalizeCountyCode(county);
       const where = segClauses.length === 1
@@ -1930,7 +1896,7 @@
     return {
       type:        'landmark',
       name:        `hsl_begin_${primaryRouteId}_${beginArMeasure}`,
-      desc:        'BEGIN ROUTE',
+      desc:        beginDesc,
       routeId:     primaryRouteId,
       arMeasure:   beginArMeasure,
       county:      countyFromPm,
@@ -1975,7 +1941,22 @@
       _routeLabel    = paddedRoute;
       _directionFrom = direction.from;
       _directionTo   = direction.to;
-      const dataPairs1 = [...rampPairs, ...landmarkPairs, ...routeBreakPairs, ...intersectionPairs, ...equationPairs, ...cityBeginPairs, ...countyBeginPairs];
+      // When county-scoped, filter landmarks to the county's AR extent derived from the
+      // other (still county-filtered) data sources. This excludes landmarks stored under
+      // a genuinely different county (e.g. route 299 in TRI/SHA/LAS/MOD when county=HUM)
+      // while keeping boundary landmarks stored under the adjacent county but physically
+      // at the boundary AR (e.g. TRONA RD stored as INY at the SBD/INY line).
+      // Equation points are scoped by PM county prefix, not by AR, so their translated AR
+      // can land anywhere on the full route. Compute the county AR extent from the other
+      // county-filtered sources first, then restrict equation pairs to that window.
+      const scopedPairs1 = [...rampPairs, ...landmarkPairs, ...routeBreakPairs, ...intersectionPairs, ...cityBeginPairs, ...countyBeginPairs];
+      const scopedArVals1 = scopedPairs1.map(p => p.arMeasure).filter(v => v != null && isFinite(v));
+      const scopedArMin1  = scopedArVals1.length ? Math.min(...scopedArVals1) - 0.01 : -Infinity;
+      const scopedArMax1  = scopedArVals1.length ? Math.max(...scopedArVals1) + 0.01 :  Infinity;
+      const filteredEqPairs1 = county
+        ? equationPairs.filter(p => p.arMeasure != null && p.arMeasure >= scopedArMin1 && p.arMeasure <= scopedArMax1)
+        : equationPairs;
+      const dataPairs1 = [...scopedPairs1, ...filteredEqPairs1];
       const dataArVals1 = dataPairs1.map(p => p.arMeasure).filter(v => v != null && isFinite(v));
       const dataArMin1  = dataArVals1.length ? Math.min(...dataArVals1) - 0.01 : -Infinity;
       const dataArMax1  = dataArVals1.length ? Math.max(...dataArVals1) + 0.01 :  Infinity;
@@ -2290,7 +2271,7 @@
           }
         }
       }
-      let cityCode  = (p.type === 'citybegin' || p.type === 'cityend' || p.type === 'citybreak' || p.type === 'cityresume') ? (p.cityCode ?? '') : (cityMap.get(p.name) ?? '');
+      let cityCode  = (p.type === 'citybegin' || p.type === 'cityend') ? (p.cityCode ?? '') : (cityMap.get(p.name) ?? '');
       if (p.type === 'routebreak' && p.desc === 'Route Break' && !hwyGroup) {
         const resume = allPairs.slice(i + 1).find(r => r.type === 'routebreak' && r.desc === 'Route Resume');
         if (resume) {
@@ -2408,7 +2389,7 @@
       }
       const nextOd = nextEntry ? parseFloat(nextEntry.odMeasure) : NaN;
       if (!isNaN(curOd) && !isNaN(nextOd)) return (nextOd - curOd).toFixed(3);
-      if (!nextEntry && (p.name?.startsWith('hsl_end_') || (p.type === 'landmark' && (/^END [HMNR] REALIGNMENT$/.test(p.desc) || p.desc === 'END TEMPORARY CONNECTION')))) return '0.000';
+      if (!nextEntry && p.type === 'landmark') return '0.000';
       return '';
     });
   }
@@ -2446,7 +2427,7 @@
                    : '';
     const hasPmPrefix  = p.pmPrefix && p.pmPrefix !== '.';
     const pmPrefixStyle = hasPmPrefix ? ' color:#991b1b; font-weight:bold;' : '';
-    const eqBlack = (p.type === 'equation' || p.type === 'citybegin' || p.type === 'cityend' || p.type === 'citybreak' || p.type === 'cityresume' || p.type === 'countybegin' || p.type === 'countyend' || isRealignment || isTemporary || isIABoundary) ? ' style="color:#000;"' : '';
+    const eqBlack = (p.type === 'equation' || p.type === 'citybegin' || p.type === 'cityend' || p.type === 'countybegin' || p.type === 'countyend' || isRealignment || isTemporary || isIABoundary) ? ' style="color:#000;"' : '';
     return `<li class="ramp-item hsl-ramp-col-template${rowClass ? ' ' + rowClass : ''}">
          <span${eqBlack}>${p.county      ? esc(String(p.county)) : ''}</span>
          <span${eqBlack}>${p.cityCode    ? esc(p.cityCode)        : ''}</span>
@@ -2493,7 +2474,7 @@
     const hgColor       = displayedHg === 'R' ? '#1d4ed8' : displayedHg === 'L' ? '#7c3aed' : '';
     const hgFStyle      = hgColor ? ` style="color:${hgColor};"` : '';
     const ftStyle       = hgColor ? ` style="padding-left:3ch; color:${hgColor};"` : ' style="padding-left:3ch"';
-    const eqBlack       = (p.type === 'equation' || p.type === 'citybegin' || p.type === 'cityend' || p.type === 'citybreak' || p.type === 'cityresume' || p.type === 'countybegin' || p.type === 'countyend' || isRealignment || isTemporary || isIABoundary) ? ' style="color:#000;"' : '';
+    const eqBlack       = (p.type === 'equation' || p.type === 'citybegin' || p.type === 'cityend' || p.type === 'countybegin' || p.type === 'countyend' || isRealignment || isTemporary || isIABoundary) ? ' style="color:#000;"' : '';
     return `<tr${rowClass ? ` class="${rowClass}"` : ''}>
       <td${eqBlack}>${p.county    ? esc(String(p.county))   : ''}</td>
       <td${eqBlack}>${p.cityCode  ? esc(p.cityCode)         : ''}</td>
