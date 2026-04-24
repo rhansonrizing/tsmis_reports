@@ -320,31 +320,26 @@ async function loadCountyCodeDomain() {
     // If county placeholder still selected, leave route disabled
     if (countySel.options[countySel.selectedIndex]?.disabled) return;
 
-    // Query layer 123 (Landmarks) for distinct route numbers — it uses the same
-    // District and County fields as all other event layers, so district+county
-    // filtering is accurate without needing a cross-check against a separate index.
-    const resolvedCounty  = normalizeCountyCode(county);
-    const districtFilter  = district     ? ` AND District = ${parseInt(district, 10)}` : '';
-    const countyFilter    = resolvedCounty ? ` AND County = '${resolvedCounty.replace(/'/g, "''")}'` : '';
-    const where = `LRSToDate IS NULL${districtFilter}${countyFilter}`;
+    // Query layer 85 (County Code) for distinct RouteIDs — this is the authoritative
+    // route registry for district/county combinations and includes routes like 58U
+    // that may have no landmarks in layer 123.
+    const districtFilter = district ? ` AND District = ${parseInt(district, 10)}` : '';
+    const countyFilter   = county   ? ` AND County_Code = '${county.replace(/'/g, "''")}'` : '';
+    const where = `RouteID LIKE 'SHS%'${districtFilter}${countyFilter}`;
 
-    const body = new URLSearchParams({
+    const params = new URLSearchParams({
       where,
-      outFields:            'RouteNum,RouteSuffix',
+      outFields:            'RouteID',
       returnDistinctValues: 'true',
       returnGeometry:       'false',
-      orderByFields:        'RouteNum ASC',
+      orderByFields:        'RouteID ASC',
       ...versionParam(),
       f:                    'json',
       token:                _token
     });
     let data;
     try {
-      const resp = await fetch(`${CONFIG.mapServiceUrl}/123/query`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: body.toString()
-      });
+      const resp = await fetch(`${CONFIG.featureServiceUrl}/85/query?${params}`);
       data = await resp.json();
     } catch (e) {
       console.warn('[onCountyChange] fetch error:', e.message);
@@ -354,7 +349,7 @@ async function loadCountyCodeDomain() {
     if (data.error) {
       const code = data.error.code;
       if (code === 498 || code === 499) { _token = null; login(); return; }
-      console.warn('[onCountyChange] layer 123 error:', data.error.code, data.error.message);
+      console.warn('[onCountyChange] layer 85 error:', data.error.code, data.error.message);
       routeSel.innerHTML = '<option value="" disabled hidden>-- Error loading routes --</option>';
       return;
     }
@@ -363,20 +358,22 @@ async function loadCountyCodeDomain() {
       return;
     }
 
+    // Parse RouteIDs: SHS_299._P → '299', SHS_058U_P → '058U'. Skip _S routes.
     const seen = new Set();
     const routes = [];
     for (const f of data.features) {
-      const num = f.attributes?.RouteNum;
-      if (num == null) continue;
-      const sfx = f.attributes?.RouteSuffix;
-      const hasSignificantSuffix = sfx && sfx !== '.';
-      const padded = String(num).padStart(3, '0');
-      const value  = hasSignificantSuffix ? padded + sfx : num;
-      const label  = hasSignificantSuffix ? padded + sfx : padded;
-      const key    = label;
-      if (!seen.has(key)) { seen.add(key); routes.push({ value, label, num }); }
+      const rid = f.attributes?.RouteID;
+      if (!rid) continue;
+      const m = rid.match(/^SHS_(\d+)([A-Z.]?)_P$/);
+      if (!m) continue;
+      const numStr = m[1];
+      const sfx    = m[2];
+      const hasSfx = sfx && sfx !== '.';
+      const value  = hasSfx ? numStr + sfx : numStr;
+      const num    = parseInt(numStr, 10);
+      if (!seen.has(value)) { seen.add(value); routes.push({ value, label: value, num }); }
     }
-    routes.sort((a, b) => a.num - b.num || String(a.label).localeCompare(String(b.label)));
+    routes.sort((a, b) => a.num - b.num || a.label.localeCompare(b.label));
 
     routeSel.innerHTML = '<option value="" disabled hidden selected>-- Select Route --</option>';
     for (const { value, label } of routes) {

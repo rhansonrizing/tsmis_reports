@@ -1580,7 +1580,7 @@
       if (!data116.error) {
         const feat     = (data116.features ?? [])[0];
         const routeEnd = feat?.attributes?.ToARMeasure;
-        if (routeEnd != null && Math.abs(endArMeasure - routeEnd) <= 0.005) {
+        if (routeEnd != null && Math.abs(endArMeasure - routeEnd) <= 0.05) {
           endDesc = 'END OF ROUTE';
         }
       }
@@ -1969,6 +1969,12 @@
       for (const p of unsortedPairs) p.hgValue = hgMap.get(p.name) ?? '';
       const allPairs = fixEqPairOrder(hsl_filterRealignmentLandmarks(hsl_filterCityBoundaries(sortWithIndependentAlignments(unsortedPairs))));
       if (allPairs.length === 0) { hsl_showRampResults('none'); return; }
+      // When county=ALL, a mid-route county transition shows both COUNTY END and
+      // COUNTY BEGIN at the same AR. The END alone is sufficient — drop the BEGIN.
+      if (!county) {
+        const countyEndArs = new Set(allPairs.filter(p => p.type === 'countyend').map(p => Math.round(p.arMeasure * 1000)));
+        allPairs.splice(0, allPairs.length, ...allPairs.filter(p => !(p.type === 'countybegin' && countyEndArs.has(Math.round(p.arMeasure * 1000)))));
+      }
 
       const lastPair = allPairs[allPairs.length - 1];
       // If the last record is a county or city boundary, check whether it falls on
@@ -2264,11 +2270,11 @@
         if (p.pmSuffix === 'R') hwyGroup = 'R';
         else if (p.pmSuffix === 'L') hwyGroup = 'L';
         else if (hwyGroup === 'R' || hwyGroup === 'L') {
-          // Layer 116 returned a synthetic alignment value for a main-alignment county record.
-          // For a county end, inherit hwyGroup from the matching county begin (same county code).
+          // Layer 116 returned an IA-alignment HG for a main-alignment county record.
+          // Scan backward for the nearest preceding record with a main-alignment HG.
           if (p.type === 'countyend') {
-            const matchBegin = allPairs.slice(0, i).reverse().find(r => r.type === 'countybegin' && r.county === p.county);
-            hwyGroup = matchBegin ? (hwyMap.get(matchBegin.name) ?? '') : '';
+            const prevMain = allPairs.slice(0, i).reverse().find(r => { const hg = hwyMap.get(r.name) ?? ''; return hg && hg !== 'R' && hg !== 'L'; });
+            hwyGroup = prevMain ? (hwyMap.get(prevMain.name) ?? '') : '';
           } else {
             hwyGroup = '';
           }
