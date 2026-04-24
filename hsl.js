@@ -17,7 +17,7 @@
   // matches any other record already in the report.
   function hsl_filterRealignmentLandmarks(pairs) {
     const isRealignment = p => p.type === 'landmark' &&
-      /^(BEGIN|END) [HMNR] REALIGNMENT$/.test(p.desc);
+      /^(BEGIN|END)( [HMNR])? REALIGNMENT$/.test(p.desc);
     const isIABoundary  = p => p.type === 'landmark' &&
       (p.desc === 'BEGIN LEFT INDEPENDENT ALIGNMENT'  || p.desc === 'END LEFT INDEPENDENT ALIGNMENT' ||
        p.desc === 'BEGIN RIGHT INDEPENDENT ALIGNMENT' || p.desc === 'END RIGHT INDEPENDENT ALIGNMENT');
@@ -274,8 +274,11 @@
       // For BEGIN/END REALIGNMENT landmarks, incorporate the PMPrefix into the
       // description so it reads "BEGIN R REALIGNMENT" (rendered with prefix bold).
       const pmPfx = a.PMPrefix && a.PMPrefix !== '.' ? String(a.PMPrefix).trim() : '';
-      const desc = (name === 'BEGIN REALIGNMENT' || name === 'END REALIGNMENT') && pmPfx
-        ? `${name === 'BEGIN REALIGNMENT' ? 'BEGIN' : 'END'} ${pmPfx} REALIGNMENT`
+      const nameLower = name.toLowerCase();
+      const isBeginRealign = nameLower === 'begin realignment';
+      const isEndRealign   = nameLower === 'end realignment';
+      const desc = (isBeginRealign || isEndRealign)
+        ? `${isBeginRealign ? 'BEGIN' : 'END'}${pmPfx ? ` ${pmPfx}` : ''} REALIGNMENT`
         : name;
       // Use a composite key as pair.name so that downstream pipeline lookups
       // (queryRangeLayer, translateToOD, hsl_queryRampDescriptions) each get a
@@ -2004,7 +2007,7 @@
         if (endPair.pmMeasure && !isNaN(parseFloat(endPair.pmMeasure))) {
           const endPmKey = pmKey(endPair);
           const prune = allPairs.filter(p => p.type === 'landmark' &&
-            (/^(BEGIN|END) [HMNR] REALIGNMENT$/.test(p.desc) || p.desc === 'BEGIN TEMPORARY CONNECTION' || p.desc === 'END TEMPORARY CONNECTION') &&
+            (/^(BEGIN|END)( [HMNR])? REALIGNMENT$/.test(p.desc) || p.desc === 'BEGIN TEMPORARY CONNECTION' || p.desc === 'END TEMPORARY CONNECTION') &&
             pmKey(p) === endPmKey);
           if (prune.length) allPairs.splice(0, allPairs.length, ...allPairs.filter(p => !prune.includes(p)));
         }
@@ -2146,7 +2149,7 @@
         if (endPair.pmMeasure && !isNaN(parseFloat(endPair.pmMeasure))) {
           const endPmKey = pmKey(endPair);
           const prune = allPairs.filter(p => p.type === 'landmark' &&
-            (/^(BEGIN|END) [HMNR] REALIGNMENT$/.test(p.desc) || p.desc === 'BEGIN TEMPORARY CONNECTION' || p.desc === 'END TEMPORARY CONNECTION') &&
+            (/^(BEGIN|END)( [HMNR])? REALIGNMENT$/.test(p.desc) || p.desc === 'BEGIN TEMPORARY CONNECTION' || p.desc === 'END TEMPORARY CONNECTION') &&
             pmKey(p) === endPmKey);
           if (prune.length) allPairs.splice(0, allPairs.length, ...allPairs.filter(p => !prune.includes(p)));
         }
@@ -2397,7 +2400,7 @@
   function hsl_renderItem(p, idx, lengths) {
     const length  = lengths[idx];
     const isEq1   = p.type === 'equation' && !p.isSecondEq;
-    const isRealignment = p.type === 'landmark' && /^(BEGIN|END) [HMNR] REALIGNMENT$/.test(p.desc);
+    const isRealignment = p.type === 'landmark' && /^(BEGIN|END)( [HMNR])? REALIGNMENT$/.test(p.desc);
     const isTemporary   = p.type === 'landmark' && (p.desc === 'BEGIN TEMPORARY CONNECTION' || p.desc === 'END TEMPORARY CONNECTION');
     const isIABoundary  = p.type === 'landmark' &&
       (p.desc === 'BEGIN LEFT INDEPENDENT ALIGNMENT'  || p.desc === 'END LEFT INDEPENDENT ALIGNMENT' ||
@@ -2448,7 +2451,7 @@
     const distToNext = p.crossRouteFormatted ? '------->'
       : p.hasCrossRoute ? '*P*'
       : p.featureType !== 'R' && p.featureType !== 'I' && length !== '' ? padMeasure(length) : '';
-    const isRealignment = p.type === 'landmark' && /^(BEGIN|END) [HMNR] REALIGNMENT$/.test(p.desc);
+    const isRealignment = p.type === 'landmark' && /^(BEGIN|END)( [HMNR])? REALIGNMENT$/.test(p.desc);
     const isTemporary   = p.type === 'landmark' && (p.desc === 'BEGIN TEMPORARY CONNECTION' || p.desc === 'END TEMPORARY CONNECTION');
     const isIABoundary  = p.type === 'landmark' &&
       (p.desc === 'BEGIN LEFT INDEPENDENT ALIGNMENT'  || p.desc === 'END LEFT INDEPENDENT ALIGNMENT' ||
