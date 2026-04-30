@@ -997,11 +997,13 @@
     .hsl-row-eq    td { color: #c00; }
     .hsl-row-rb    td { color: #166534; }
     .hsl-row-cb    td { color: #166534; }
+    .hsl-row-rblm  td { color: #166534; }
     .hsl-row-ia-r  td { }
     .hsl-row-ia-l  td { }
     .hsl-item-eq   > span { color: #c00; }
     .hsl-item-rb   > span { color: #166534; }
     .hsl-item-cb   > span { color: #166534; }
+    .hsl-item-rblm > span { color: #166534; }
     .hsl-item-rb > span:nth-child(6), .hsl-item-rb > span:nth-child(7),
     .hsl-item-cb > span:nth-child(6), .hsl-item-cb > span:nth-child(7) { font-weight: bold; }
     .hsl-item-ia-r > span { }
