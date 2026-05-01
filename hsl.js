@@ -98,12 +98,26 @@
     const minAR = nonCityArs.length ? Math.min(...nonCityArs) : -Infinity;
     const maxAR = nonCityArs.length ? Math.max(...nonCityArs) :  Infinity;
 
+    const routeBreakARs = pairs
+      .filter(p => p.type === 'routebreak' && p.arMeasure != null && !isNaN(p.arMeasure))
+      .map(p => p.arMeasure);
+
     const filtered = pairs.filter(p => {
       if (!isBoundaryType(p.type)) return true;
-      if (p.arMeasure != null && !isNaN(p.arMeasure) && (p.arMeasure < minAR - 0.005 || p.arMeasure > maxAR + 0.005)) return false;
-      if (p.odMeasure !== '' && p.odMeasure != null && parseFloat(p.odMeasure) < 0) return false;
+      if (p.arMeasure != null && !isNaN(p.arMeasure) && (p.arMeasure < minAR - 0.005 || p.arMeasure > maxAR + 0.005)) {
+        return false;
+      }
+      if (p.odMeasure !== '' && p.odMeasure != null && parseFloat(p.odMeasure) < 0) {
+        return false;
+      }
       const pmVal = parseFloat(p.pmMeasure);
-      if (!isNaN(pmVal) && pmVal < -0.001) return false;
+      if (!isNaN(pmVal) && pmVal < -0.001) {
+        return false;
+      }
+      if (isCityType(p.type) && p.arMeasure != null && !isNaN(p.arMeasure) &&
+          routeBreakARs.some(ar => Math.abs(ar - p.arMeasure) < 0.01)) {
+        return false;
+      }
       return true;
     });
 
@@ -122,11 +136,77 @@
                      p.pmMeasure !== '' && p.pmMeasure != null && !isNaN(parseFloat(p.pmMeasure)))
         .map(pmPrefixMeasure)
     );
-    return filtered.filter(p => {
+    const cityAfterH = filtered.filter(p => {
       if (!isCityType(p.type) && p.type !== 'countybegin') return true;
       if (p.pmMeasure === '' || p.pmMeasure == null || isNaN(parseFloat(p.pmMeasure))) return true;
       return !naturalHKeys.has(pmPrefixMeasure(p));
     });
+
+    // Compact pass: remove structural noise from overlapping/adjacent layer 74 features.
+    // Operates on city records only; all non-city records pass through unchanged.
+    const cityOnly = cityAfterH.filter(p => isCityType(p.type));
+    const compactRemove = new Set();
+
+    // Pass 1: dedup same-type same-city within 0.01 AR (two layer 74 features at same boundary)
+    for (let ci = 0; ci < cityOnly.length; ci++) {
+      if (compactRemove.has(ci)) continue;
+      for (let cj = ci + 1; cj < cityOnly.length; cj++) {
+        if (compactRemove.has(cj)) continue;
+        if (cityOnly[cj].arMeasure - cityOnly[ci].arMeasure > 0.01) break;
+        if (cityOnly[ci].type === cityOnly[cj].type && cityOnly[ci].cityCode === cityOnly[cj].cityCode)
+          compactRemove.add(cj);
+      }
+    }
+
+    // Pass 2: cancel same-city end+begin within 0.01 AR (zero-width gap in city coverage)
+    for (let ci = 0; ci < cityOnly.length; ci++) {
+      if (compactRemove.has(ci) || cityOnly[ci].type !== 'cityend') continue;
+      for (let cj = ci + 1; cj < cityOnly.length; cj++) {
+        if (compactRemove.has(cj)) continue;
+        if (cityOnly[cj].arMeasure - cityOnly[ci].arMeasure > 0.01) break;
+        if (cityOnly[cj].type === 'citybegin' && cityOnly[ci].cityCode === cityOnly[cj].cityCode) {
+          compactRemove.add(ci);
+          compactRemove.add(cj);
+          break;
+        }
+      }
+    }
+
+    // Pass 3: consecutive same-type same-city — keep first begin, keep last end
+    let compactPrev = null;
+    for (let ci = 0; ci < cityOnly.length; ci++) {
+      if (compactRemove.has(ci)) continue;
+      const cp = cityOnly[ci];
+      if (compactPrev && compactPrev.code === cp.cityCode && compactPrev.type === cp.type) {
+        if (cp.type === 'cityend') {
+          compactRemove.add(compactPrev.ci);
+          compactPrev = { type: cp.type, code: cp.cityCode, ci };
+        } else {
+          compactRemove.add(ci);
+        }
+      } else {
+        compactPrev = { type: cp.type, code: cp.cityCode, ci };
+      }
+    }
+
+    // Pass 4: drop a leading cityend when a citybegin exists at the same AR.
+    // A report should not open with a city-end record for a city that was never begun.
+    let firstCi = -1;
+    for (let ci = 0; ci < cityOnly.length; ci++) {
+      if (!compactRemove.has(ci)) { firstCi = ci; break; }
+    }
+    if (firstCi >= 0 && cityOnly[firstCi].type === 'cityend') {
+      const endAR = cityOnly[firstCi].arMeasure;
+      for (let cj = firstCi + 1; cj < cityOnly.length; cj++) {
+        if (compactRemove.has(cj)) continue;
+        if (cityOnly[cj].arMeasure - endAR > 0.01) break;
+        if (cityOnly[cj].type === 'citybegin') { compactRemove.add(firstCi); break; }
+      }
+    }
+
+    if (compactRemove.size === 0) return cityAfterH;
+    const compactDropObjs = new Set(Array.from(compactRemove).map(ci => cityOnly[ci]));
+    return cityAfterH.filter(p => !compactDropObjs.has(p));
   }
 
   // Reassigns county/PM for landmarks that sit at the same AR as a countyend
@@ -185,7 +265,7 @@
       if (!isCityType(p)) return true;
       const ar = arOf(p);
       if (ar == null) return true;
-      return !anyWithin(hslArs, ar) && !anyWithin(iaBdryArs, ar);
+      return !(anyWithin(hslArs, ar) || anyWithin(iaBdryArs, ar));
     });
 
     const cityArs = afterCity.filter(isCityType).map(arOf).filter(a => a != null);
@@ -2062,9 +2142,10 @@
           allPairs.unshift(beginPair);
         }
       }
+      const cityPairsForLookup = allPairs.filter(p => p.type === 'citybegin' || p.type === 'cityend');
       allPairs.splice(0, allPairs.length, ...hsl_applySyntheticHierarchy(allPairs));
       hsl_applyRouteBreakEquations(allPairs);
-      await hsl_queryRampDescriptions(allPairs, unresolvedIntersections, hgMap);
+      await hsl_queryRampDescriptions(allPairs, unresolvedIntersections, hgMap, cityPairsForLookup);
     } catch (err) {
       hsl_showRampResults('error', err.message || 'An error occurred.');
     } finally {
@@ -2201,9 +2282,10 @@
           allPairs.unshift(beginPair);
         }
       }
+      const cityPairsForLookup = allPairs.filter(p => p.type === 'citybegin' || p.type === 'cityend');
       allPairs.splice(0, allPairs.length, ...hsl_applySyntheticHierarchy(allPairs));
       hsl_applyRouteBreakEquations(allPairs);
-      await hsl_queryRampDescriptions(allPairs, unresolvedIntersections, hgMap);
+      await hsl_queryRampDescriptions(allPairs, unresolvedIntersections, hgMap, cityPairsForLookup);
     } finally {
       btn.disabled = false;
       stopThinking(btn);
@@ -2288,6 +2370,37 @@
       }
     }
 
+    // For non-equation route breaks/resumes: if exactly one landmark shares the same
+    // PM prefix+measure, append its description to the route break/resume desc so
+    // the row reads e.g. "ROUTE RESUME N JCT ST FAI 680". The landmark row is kept.
+    for (const p of allPairs) {
+      if (p.type !== 'routebreak' || suppressed.has(p.name)) continue;
+      if (p.pmMeasure == null || p.pmMeasure === '' || isNaN(parseFloat(p.pmMeasure))) continue;
+      const matches = allPairs.filter(lm =>
+        lm.type === 'landmark' && !suppressed.has(lm.name) &&
+        lm.pmMeasure != null && lm.pmMeasure !== '' && !isNaN(parseFloat(lm.pmMeasure)) &&
+        normPfx(lm.pmPrefix) === normPfx(p.pmPrefix) &&
+        pmClose(lm.pmMeasure, p.pmMeasure)
+      );
+      if (matches.length === 1) {
+        p.desc = p.desc + ' ' + matches[0].desc;
+        suppressed.add(matches[0].name);
+      }
+    }
+
+    // Ensure ROUTE BREAK and ROUTE RESUME are always on consecutive lines.
+    // Records sorted between them (e.g. a landmark at the same PM) are moved
+    // to just after the ROUTE RESUME.
+    for (const [, rb] of rbPairs) {
+      if (!rb.brk || !rb.rsm) continue;
+      if (suppressed.has(rb.brk.name) || suppressed.has(rb.rsm.name)) continue;
+      const brkIdx = allPairs.indexOf(rb.brk);
+      const rsmIdx = allPairs.indexOf(rb.rsm);
+      if (brkIdx < 0 || rsmIdx < 0 || rsmIdx <= brkIdx + 1) continue;
+      const between = allPairs.splice(brkIdx + 1, rsmIdx - brkIdx - 1);
+      allPairs.splice(brkIdx + 2, 0, ...between);
+    }
+
     if (suppressed.size === 0 && line1ByEq1Name.size === 0) return;
     const result = [];
     for (const p of allPairs) {
@@ -2298,7 +2411,7 @@
     allPairs.splice(0, allPairs.length, ...result);
   }
 
-  async function hsl_queryRampDescriptions(allPairs, unresolvedIntersections = [], precomputedHgMap = null) {
+  async function hsl_queryRampDescriptions(allPairs, unresolvedIntersections = [], precomputedHgMap = null, cityPairsForLookup = null) {
     const rampsOnly = allPairs.filter(p => p.type === 'ramp');
     const fetchDescriptions = async () => {
       const descMap = new Map();
@@ -2339,9 +2452,34 @@
       }
       return descMap;
     };
-    const [descMap, hwyMap, cityMap] = precomputedHgMap
-      ? await Promise.all([fetchDescriptions(), Promise.resolve(precomputedHgMap), queryRangeLayer(allPairs, 74, 'City_Code')])
-      : await Promise.all([fetchDescriptions(), queryRangeLayer(allPairs, 116, 'Highway_Group'), queryRangeLayer(allPairs, 74, 'City_Code')]);
+    const [descMap, hwyMap] = precomputedHgMap
+      ? await Promise.all([fetchDescriptions(), Promise.resolve(precomputedHgMap)])
+      : await Promise.all([fetchDescriptions(), queryRangeLayer(allPairs, 116, 'Highway_Group')]);
+    // Build city code map by scanning pre-suppression city begin/end records in AR order.
+    // This is more accurate than queryRangeLayer(layer 74) because it uses the same district-
+    // filtered data that produced the visible CITY BEGIN/END rows, avoiding phantom city
+    // assignments from out-of-district or broad-range layer 74 features.
+    const cityPairs = cityPairsForLookup ?? allPairs.filter(p => p.type === 'citybegin' || p.type === 'cityend');
+    const cityMap = (() => {
+      const map = new Map();
+      // Sort by AR; the source is already sorted but guard against edge cases.
+      const sorted = [...cityPairs].sort((a, b) => a.arMeasure - b.arMeasure);
+      let ci = 0;
+      let activeCity = '';
+      for (const p of allPairs) {
+        if (p.type === 'citybegin' || p.type === 'cityend') continue;
+        // Advance past city boundaries strictly before p.arMeasure so that a record
+        // at the exact AR of a cityEND is still considered inside the departing city
+        // (mirrors the inclusive ToARMeasure <= m behaviour of queryRangeLayer).
+        while (ci < sorted.length && sorted[ci].arMeasure < p.arMeasure) {
+          const cp = sorted[ci++];
+          if (cp.type === 'citybegin') activeCity = cp.cityCode ?? '';
+          else if (cp.type === 'cityend') activeCity = '';
+        }
+        map.set(p.name, activeCity);
+      }
+      return map;
+    })();
     const odMap = translateToOD(allPairs);
     const results = allPairs.map((p, i) => {
       let hwyGroup = hwyMap.get(p.name) ?? (p.hgValue ?? '');
@@ -2541,7 +2679,7 @@
          <span style="justify-self:start;">${p.type === 'equation' ? (p.isSecondEq && p.pmSuffix !== 'L' ? 'E' : '') : (p.pmSuffix === 'E' ? 'E' : '')}</span>
          ${hgAndF}
          ${isEq1 ? '<span></span>' : `<span style="display:block;text-align:center;">${p.crossRouteFormatted ? '------->' : p.hasCrossRoute ? '*P*' : p.featureType !== 'R' && p.featureType !== 'I' && length !== '' ? padMeasure(length) : ''}</span>`}
-         ${isEq1 ? '<span style="text-align:left;">EQUATES TO</span>' : `<span style="text-align:left;">${p.desc ? (isIABoundary ? esc(p.desc).replace(/\b(RIGHT|LEFT)\b/, '<strong>$1</strong>') : p.type === 'routebrklm' ? esc(p.desc).replace(/\b((?:RTE|ROUTE)\s+(?:BRK|BREAK))\b/g, '<strong>$1</strong>') : esc(p.desc)) : ''}</span>`}
+         ${isEq1 ? '<span style="text-align:left;">EQUATES TO</span>' : `<span style="text-align:left;">${p.desc ? (isIABoundary ? esc(p.desc).replace(/\b(RIGHT|LEFT)\b/, '<strong>$1</strong>') : p.type === 'routebrklm' ? esc(p.desc).replace(/\b((?:RTE|ROUTE)\s+(?:BRK|BREAK))\b/g, '<strong>$1</strong>') : p.type === 'routebreak' ? esc(p.desc).replace(/^(ROUTE (?:BREAK|RESUME))/, '<strong>$1</strong>') : esc(p.desc)) : ''}</span>`}
          <span style="color:#6b7280;font-size:0.75em;text-align:right;">${p.arMeasure != null && !isNaN(p.arMeasure) ? parseFloat(p.arMeasure).toFixed(3) : ''}</span>
          <span style="color:#6b7280;font-size:0.75em;text-align:right;">${p.odMeasure !== '' && p.odMeasure != null ? parseFloat(p.odMeasure).toFixed(3) : ''}</span>
        </li>`;
@@ -2592,7 +2730,7 @@
         : `<td${hgFStyle}>${isIndAlignEq2 ? 'E' : p.pmSuffix === 'L' ? 'L' : p.hwyGroup ? esc(p.hwyGroup) : ''}</td>
            <td${ftStyle}>${p.featureType ? esc(p.featureType) : ''}</td>
            <td style="text-align:center">${distToNext}</td>
-           <td style="text-align:left">${p.desc ? (isIABoundary ? esc(p.desc).replace(/\b(RIGHT|LEFT)\b/, '<strong>$1</strong>') : p.type === 'routebrklm' ? esc(p.desc).replace(/\b((?:RTE|ROUTE)\s+(?:BRK|BREAK))\b/g, '<strong>$1</strong>') : esc(p.desc)) : ''}</td>`
+           <td style="text-align:left">${p.desc ? (isIABoundary ? esc(p.desc).replace(/\b(RIGHT|LEFT)\b/, '<strong>$1</strong>') : p.type === 'routebrklm' ? esc(p.desc).replace(/\b((?:RTE|ROUTE)\s+(?:BRK|BREAK))\b/g, '<strong>$1</strong>') : p.type === 'routebreak' ? esc(p.desc).replace(/^(ROUTE (?:BREAK|RESUME))/, '<strong>$1</strong>') : esc(p.desc)) : ''}</td>`
       }
     </tr>`;
   }

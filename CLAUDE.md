@@ -258,13 +258,21 @@ Phase 4: Terminal records
   hsl_queryBeginRecord(segments, district, county, routeNum)
     → same layer sequence for begin AR
 
-Phase 5: Synthetic suppression
+Phase 5: Synthetic suppression + route break enrichment
+  cityPairsForLookup = allPairs.filter(p => p.type === 'citybegin' || p.type === 'cityend')
+    → snapshot BEFORE hsl_applySyntheticHierarchy removes city records at route terminals
   hsl_applySyntheticHierarchy(allPairs)
     → tier-based suppression: hsl_end/begin_* > ia_bdry_* > city* > county*
+  hsl_applyRouteBreakEquations(allPairs)
+    → pairs Route Break + Route Resume via routeBreakId; handles equation-pair display
+    → landmark enrichment: if exactly one landmark shares prefix+measure with a route break/resume,
+      appends landmark desc to the route break/resume; suppresses the standalone landmark row
+    → consecutive ordering: ensures ROUTE BREAK and ROUTE RESUME are on adjacent lines
+      (moves records sorted between them to just after the ROUTE RESUME)
 
 Phase 6: Render pipeline
-  hsl_queryRampDescriptions(allPairs, unresolvedIntersections, hgMap)
-    → layer 131 (ramp descriptions) + queryRangeLayer(74,'City_Code') + translateToOD
+  hsl_queryRampDescriptions(allPairs, unresolvedIntersections, hgMap, cityPairsForLookup)
+    → layer 131 (ramp descriptions) + scan-based city map (from cityPairsForLookup) + translateToOD
     → hsl_showRampResults('success', null, results, unresolved)
     → _hslLengths = hsl_computeLengths(results)
     → _hslPageStarts = hsl_computePageStarts(results)
@@ -450,6 +458,7 @@ Screen vs. print row renderers. Key display rules:
 - **Length column**: `crossRouteFormatted` → `------->` ; `hasCrossRoute` → `*P*` ; else distance if H-type.
 - **Row colors**: `hsl-item-eq` (equation), `hsl-item-rb` (route breaks), `hsl-item-cb` (city/county/hsl_end/begin/realignment/IA boundary), `hsl-item-ia-r` (R alignment), `hsl-item-ia-l` (L alignment).
 - **Intersection desc**: if `crossPmMeasure` → appends `[crossRouteLabel PM]`.
+- **Route break/resume desc**: `ROUTE BREAK` or `ROUTE RESUME` prefix wrapped in `<strong>`; remainder (landmark enrichment if present) in normal weight.
 
 ### hsl_printAll
 - Renders cover page + legend page + paginated `<table>` sections (one per `_hslPageStarts` entry).
@@ -721,9 +730,14 @@ sortWithIndependentAlignments(unsortedPairs)
     Diff county  → countyend sorts first (landmark is incoming county marker, e.g. "BEGIN OF COUNTY")
   ↓
 hsl_filterCityBoundaries(sorted)
-  Drops citybegin/cityend records whose AR falls outside
-  the non-city AR extent, whose ODMeasure < 0, or whose pmMeasure < 0.
-  Also suppresses countybegin records when a natural H landmark exists at the same PM.
+  Per-record drops: AR out of extent (±0.005), OD < 0, PM < 0, AR within 0.01 of a route break.
+  NaturalH suppression: countybegin (and citybegin/end) records whose PM key matches a
+    landmark/equation/routebreak record are dropped.
+  Compact pass (four sub-passes on city records only):
+    Pass 1 — dedup same-type same-city within 0.01 AR (keep first)
+    Pass 2 — cancel same-city cityend+citybegin within 0.01 AR (zero-width gap)
+    Pass 3 — consecutive same-type same-city: keep first begin, keep last end
+    Pass 4 — drop a leading cityend when a citybegin exists at the same AR (≤ 0.01)
   ↓
 hsl_filterRealignmentLandmarks(filtered)
   Removes BEGIN/END REALIGNMENT landmarks whose pmKey matches any other record.

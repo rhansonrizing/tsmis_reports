@@ -83,15 +83,31 @@ Suppressed (not prepended to the list) if **any FT=H record** in `allPairs` has 
 
 Applied before the created begin/end check. Each `citybegin` and `cityend` record is dropped if **any** of the following are true:
 
-1. Its AR measure falls outside the non-city AR extent by more than **0.005** (removes out-of-district city records that leak through because layer 74 has no district field).
+1. Its AR measure falls outside the non-city AR extent by more than **0.005**.
 2. Its OD measure is **negative**.
 3. Its PM measure is **negative** or negative-zero (boundary precedes the start of the queried segment).
+4. Its AR measure is within **0.01** of a route break or route resume record.
 
 City begin/end records are always displayed even when another H record shares the same PM key.
 
 When a city spans multiple non-contiguous route segments, all intermediate `citybegin`/`cityend` records are kept as-is.
 
 City begin/end records on an **L independent alignment** (`EndPMSuffix === 'L'` or `BeginPMSuffix === 'L'`) are suppressed at source — the city boundary was already crossed on the main alignment before the split.
+
+#### Compact pass (four sub-passes, applied after the per-record filters above)
+
+Removes structural noise that arises from overlapping or adjacent layer 74 features. Operates on city records only; all non-city records pass through unchanged.
+
+| Pass | Rule |
+|------|------|
+| 1 | Drop duplicate same-type same-city records within **0.01 AR** of each other (keep first). |
+| 2 | Cancel a same-city `cityend`+`citybegin` pair within **0.01 AR** (zero-width gap in city coverage). |
+| 3 | For consecutive same-type same-city runs: keep the **first** begin and the **last** end. |
+| 4 | Drop a leading `cityend` when a `citybegin` exists at the same AR (≤ 0.01). A report should not open with a city-end for a city that was never begun. |
+
+#### City code column assignment
+
+City codes shown in the city column for non-boundary records (landmarks, ramps, intersections) are derived by scanning the **pre-suppression** city begin/end records in AR order — not from a separate `queryRangeLayer` call. This ensures the city column is exactly consistent with the CITY BEGIN/END rows visible in the report, and avoids phantom assignments from out-of-district or overlapping layer 74 features that `queryCityBegins` correctly excludes.
 
 ---
 
@@ -122,6 +138,19 @@ An IA boundary record is suppressed (not added to the report) if any of the foll
 If the record has no valid PM measure it is always shown.
 
 IA boundary records are excluded from distance calculations.
+
+---
+
+### Route Break / Route Resume Records (`hsl_applyRouteBreakEquations`)
+
+Route Break and Route Resume pairs are linked by their `Route_Break_ID`. When a matching landmark exists at the same PM prefix + measure as a route break or resume:
+
+- If **exactly one** landmark shares the same PM prefix and measure (within 0.001), its description is appended to the route break/resume desc (e.g., `ROUTE RESUME N JCT ST FAI 680`), and the standalone landmark row is **suppressed**.
+- If **zero or more than one** landmark matches, standard text (`ROUTE BREAK` / `ROUTE RESUME`) is used with no appended description.
+
+Route Break and Route Resume are always kept on **consecutive lines** — any records sorted between them (e.g., a co-located landmark before absorption) are moved to just after the Route Resume.
+
+In the report, the words `ROUTE BREAK` or `ROUTE RESUME` are displayed in **bold**, with any appended landmark description in normal weight.
 
 ---
 
