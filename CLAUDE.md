@@ -265,8 +265,11 @@ Phase 5: Synthetic suppression + route break enrichment
     → tier-based suppression: hsl_end/begin_* > ia_bdry_* > city* > county*
   hsl_applyRouteBreakEquations(allPairs)
     → pairs Route Break + Route Resume via routeBreakId; handles equation-pair display
-    → landmark enrichment: if exactly one landmark shares prefix+measure with a route break/resume,
+    → route-break landmark enrichment: if exactly one landmark shares prefix+measure with a route break/resume,
       appends landmark desc to the route break/resume; suppresses the standalone landmark row
+    → equation landmark enrichment: if exactly one landmark shares prefix+measure with eq1 or eq2,
+      stores lmDesc on the eq record and suppresses the landmark row; eq1 renders
+      "<strong>EQUATES TO</strong> lmDesc", eq2 shows lmDesc in the description column
     → consecutive ordering: ensures ROUTE BREAK and ROUTE RESUME are on adjacent lines
       (moves records sorted between them to just after the ROUTE RESUME)
 
@@ -453,10 +456,12 @@ Produces an array parallel to `results`. Each entry is `(nextOD - curOD).toFixed
 
 ### hsl_renderItem / hsl_renderItemAsRow
 Screen vs. print row renderers. Key display rules:
-- **eq1 rows**: span columns 6–9 with "EQUATES TO" text; no length or desc cell.
-- **HG column**: `pmSuffix=L` → shows `L`; `isSecondEq && pmSuffix=L` → shows `E`; otherwise shows `hwyGroup`.
+- **eq1 rows**: span columns 6–9 with "EQUATES TO" text (or `<strong>EQUATES TO</strong> lmDesc` if a landmark was absorbed); no length or desc cell.
+- **eq2 desc**: shows `p.lmDesc` (absorbed landmark) if present, otherwise `p.desc` (empty by default).
+- **HG column**: `pmSuffix=L` → shows `L` (including eq2 records on the L alignment); otherwise shows `hwyGroup`.
 - **Length column**: `crossRouteFormatted` → `------->` ; `hasCrossRoute` → `*P*` ; else distance if H-type.
 - **Row colors**: `hsl-item-eq` (equation), `hsl-item-rb` (route breaks), `hsl-item-cb` (city/county/hsl_end/begin/realignment/IA boundary), `hsl-item-ia-r` (R alignment), `hsl-item-ia-l` (L alignment).
+- **AR/OD columns** (screen renderer only): values within ±0.0005 of zero are clamped to `0.000` to prevent `-0.000` rendering from network calibration offsets.
 - **Intersection desc**: if `crossPmMeasure` → appends `[crossRouteLabel PM]`.
 - **Route break/resume desc**: `ROUTE BREAK` or `ROUTE RESUME` prefix wrapped in `<strong>`; remainder (landmark enrichment if present) in normal weight.
 
@@ -507,9 +512,9 @@ Suppression tiers (lower tiers hidden when higher tier exists at same AR ± 0.00
 ### queryEquationPointsFromNetwork (layer 1)
 Two-pass pairing strategy:
 1. **Pass 1 (OD-based):** Group calibration points by OD measure (3dp). Groups of exactly 2 distinct PMs = one equation pair. Lower AR = eq1, higher AR = eq2.
-2. **Pass 2 (AR fallback):** For unpaired points, pair by AR proximity (≤ 0.005). Guards: same indL/indR classification; not duplicate (same PM); AR threshold to avoid false pairs from RouteId variants.
+2. **Pass 2 (AR fallback):** For unpaired points, pair by AR proximity (≤ 0.005). Guards: same indL/indR classification; not duplicate (same PM to 3dp); AR < 0.0005 AND pmDiff < threshold (dup-variant guard). OD matching is **not** required — at genuine equation points the OD network has a discontinuity, so both sides intentionally produce different OD values.
 
-County is required — `queryEquationPointsFromNetwork` returns `[]` if county unresolved.
+When county is specified, queried using `RouteId LIKE '${county}${route}%'`. When county=All, layer 85 is queried first to discover all counties on the route's AR segments; OR'd LIKE clauses cover all discovered counties. Returns `[]` only if the layer 85 query finds no counties.
 
 ### queryCityBegins (layer 74)
 - Queries both _P and _S RouteIDs (city ranges on L alignments stored under _S).
@@ -590,7 +595,7 @@ Equation points are detected on the fly from calibration point data (layer 1):
 
 5. **Build pair objects** in the same `eq1`/`eq2` structure as all other equation points — `isSecondEq: false` on eq1 (desc: `'PM EQUATION'`), `isSecondEq: true` and `pmSuffix: 'E'` on eq2 — so all existing sort tiebreak and render logic works unchanged.
 
-**Requires county:** The function returns `[]` if no county is resolved, since a county-scoped PM RouteId prefix is needed to avoid querying the entire network.
+**County=All:** When county is null (All mode), layer 85 is queried to discover all counties on the route's AR segments. OR'd `RouteId LIKE` clauses are built for all discovered counties. Returns `[]` only if the layer 85 query finds no counties.
 
 ---
 

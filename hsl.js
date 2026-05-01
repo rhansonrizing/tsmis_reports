@@ -694,11 +694,45 @@
   async function queryEquationPointsFromNetwork(segments, routeNumDigits, district = null, county = null) {
     if (!segments.length) return [];
 
-    // Build RouteId LIKE clause using county code + route number (PM network format, e.g. 'HUM254')
+    // Build RouteId LIKE clause using county code + route number (PM network format, e.g. 'HUM254').
+    // When county=All, query layer 85 to discover all counties this route passes through.
     const resolvedCounty = county ? normalizeCountyCode(county) : null;
-    if (!resolvedCounty) return []; // county required to scope PM routeId lookup
-    const routePrefix = `${resolvedCounty}${routeNumDigits}`;
-    const where = `NetworkId = 2 AND RouteId LIKE '${routePrefix}%'${getDateFilter('LRSFromDate', 'LRSToDate')}`;
+    let routeIdFilter;
+    if (resolvedCounty) {
+      routeIdFilter = `RouteId LIKE '${resolvedCounty}${routeNumDigits}%'`;
+    } else {
+      const segClauses = segments.map(({ fromBest, toBest }) => {
+        const rid   = fromBest.routeId.endsWith('_S') ? fromBest.routeId.slice(0, -2) + '_P' : fromBest.routeId;
+        const fromM = Math.min(fromBest.measure, toBest.measure);
+        const toM   = Math.max(fromBest.measure, toBest.measure);
+        return `(RouteID = '${rid}' AND FromARMeasure <= ${toM} AND ToARMeasure >= ${fromM})`;
+      });
+      const countyBody = new URLSearchParams({
+        where:                `(${segClauses.join(' OR ')})${getDateFilter()}`,
+        outFields:            'County_Code',
+        returnDistinctValues: 'true',
+        returnGeometry:       'false',
+        ...versionParam(),
+        f:                    'json',
+        token:                _token
+      });
+      let countyCodes = [];
+      try {
+        const resp = await fetch(`${CONFIG.mapServiceUrl}/85/query`, {
+          method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: countyBody.toString()
+        });
+        const countyData = await resp.json();
+        countyCodes = [...new Set(
+          (countyData.features ?? []).map(f => normalizeCountyCode(f.attributes?.County_Code)).filter(Boolean)
+        )];
+      } catch (e) {
+        console.error('[queryEquationPointsFromNetwork] county lookup error:', e.message);
+      }
+      if (!countyCodes.length) return [];
+      const likeExprs = countyCodes.map(c => `RouteId LIKE '${c}${routeNumDigits}%'`);
+      routeIdFilter = likeExprs.length === 1 ? likeExprs[0] : `(${likeExprs.join(' OR ')})`;
+    }
+    const where = `NetworkId = 2 AND ${routeIdFilter}${getDateFilter('LRSFromDate', 'LRSToDate')}`;
 
     const body = new URLSearchParams({
       where,
@@ -897,15 +931,6 @@
         const jIsIndL = points[j].pmSuffix === 'L';
         if (iIsIndL !== jIsIndL) continue;
         if (parseFloat(points[i].pmMeasure).toFixed(3) === parseFloat(points[j].pmMeasure).toFixed(3)) continue;
-        // Require matching OD to 3dp — two calibration points at the same physical
-        // When AR values are nearly identical (< 0.001), the two points are at the
-        // same physical location. In this case the OD network may also have a
-        // discontinuity here, producing different OD values on each side — so skip
-        // the OD match requirement. For larger AR spreads, mismatched OD still means
-        // independent points that happen to be close in AR, not an equation pair.
-        const od1 = parseFloat(points[i].odMeasure);
-        const od2 = parseFloat(points[j].odMeasure);
-        if (arDiff >= 0.001 && (isNaN(od1) || isNaN(od2) || od1.toFixed(3) !== od2.toFixed(3))) continue;
         // Dup check: skip RouteId variants of the same calibration point. True variants
         // have the same PM (pmDiff ≈ 0); a pmDiff of 0.01+ is a genuine equation pair.
         const dupThreshold = (iIsIndL && jIsIndL) ? 0.01 : 0.001;
@@ -2388,6 +2413,26 @@
       }
     }
 
+    // Equation landmark enrichment: if exactly one landmark shares the same
+    // PM prefix+measure as eq1 or eq2, store its desc and suppress the landmark row.
+    for (const [, eq] of eqPairs) {
+      if (!eq.eq1 || !eq.eq2) continue;
+      if (eq.eq2.isRouteBreakEquation) continue;
+      for (const eqRow of [eq.eq1, eq.eq2]) {
+        if (eqRow.pmMeasure == null || eqRow.pmMeasure === '' || isNaN(parseFloat(eqRow.pmMeasure))) continue;
+        const matches = allPairs.filter(lm =>
+          lm.type === 'landmark' && !suppressed.has(lm.name) &&
+          lm.pmMeasure != null && lm.pmMeasure !== '' && !isNaN(parseFloat(lm.pmMeasure)) &&
+          normPfx(lm.pmPrefix) === normPfx(eqRow.pmPrefix) &&
+          pmClose(lm.pmMeasure, eqRow.pmMeasure)
+        );
+        if (matches.length === 1) {
+          eqRow.lmDesc = matches[0].desc;
+          suppressed.add(matches[0].name);
+        }
+      }
+    }
+
     // Ensure ROUTE BREAK and ROUTE RESUME are always on consecutive lines.
     // Records sorted between them (e.g. a landmark at the same PM) are moved
     // to just after the ROUTE RESUME.
@@ -2644,14 +2689,13 @@
     const isIABoundary  = p.type === 'landmark' &&
       (p.desc === 'BEGIN LEFT INDEPENDENT ALIGNMENT'  || p.desc === 'END LEFT INDEPENDENT ALIGNMENT' ||
        p.desc === 'BEGIN RIGHT INDEPENDENT ALIGNMENT' || p.desc === 'END RIGHT INDEPENDENT ALIGNMENT');
-    const isIndAlignEq2 = p.type === 'equation' && p.isSecondEq && p.pmSuffix === 'L';
-    const displayedHg = isIndAlignEq2 ? 'E' : (p.pmSuffix === 'L' ? 'L' : (p.hwyGroup || ''));
+    const displayedHg = p.pmSuffix === 'L' ? 'L' : (p.hwyGroup || '');
     const hgColor  = displayedHg === 'R' ? '#1d4ed8' : displayedHg === 'L' ? '#7c3aed' : '';
     const hgFStyle = hgColor ? ` style="color:${hgColor}; font-weight:bold;"` : '';
     const ftStyle  = hgColor ? ` style="padding-left:3ch; color:${hgColor}; font-weight:bold;"` : ' style="padding-left:3ch"';
     const hgAndF  = isEq1
       ? `<span></span><span></span>`
-      : `<span${hgFStyle}>${isIndAlignEq2 ? 'E' : p.pmSuffix === 'L' ? 'L' : p.hwyGroup ? esc(p.hwyGroup) : ''}</span>
+      : `<span${hgFStyle}>${p.pmSuffix === 'L' ? 'L' : p.hwyGroup ? esc(p.hwyGroup) : ''}</span>
          <span${ftStyle}>${p.featureType}</span>`;
     const rowClass = p.type === 'routebrklm'             ? 'hsl-item-rblm'
                    : p.type === 'equation'              ? 'hsl-item-eq'
@@ -2676,12 +2720,12 @@
          <span${eqBlack}>${p.cityCode    ? esc(p.cityCode)        : ''}</span>
          <span style="text-align:right;${pmPrefixStyle}">${hasPmPrefix ? esc(p.pmPrefix) : ''}</span>
          <span style="text-align:center;">${esc(padMeasure(p.pmMeasure))}</span>
-         <span style="justify-self:start;">${p.type === 'equation' ? (p.isSecondEq && p.pmSuffix !== 'L' ? 'E' : '') : (p.pmSuffix === 'E' ? 'E' : '')}</span>
+         <span style="justify-self:start;">${p.type === 'equation' ? (p.isSecondEq ? 'E' : '') : (p.pmSuffix === 'E' ? 'E' : '')}</span>
          ${hgAndF}
          ${isEq1 ? '<span></span>' : `<span style="display:block;text-align:center;">${p.crossRouteFormatted ? '------->' : p.hasCrossRoute ? '*P*' : p.featureType !== 'R' && p.featureType !== 'I' && length !== '' ? padMeasure(length) : ''}</span>`}
-         ${isEq1 ? '<span style="text-align:left;">EQUATES TO</span>' : `<span style="text-align:left;">${p.desc ? (isIABoundary ? esc(p.desc).replace(/\b(RIGHT|LEFT)\b/, '<strong>$1</strong>') : p.type === 'routebrklm' ? esc(p.desc).replace(/\b((?:RTE|ROUTE)\s+(?:BRK|BREAK))\b/g, '<strong>$1</strong>') : p.type === 'routebreak' ? esc(p.desc).replace(/^(ROUTE (?:BREAK|RESUME))/, '<strong>$1</strong>') : esc(p.desc)) : ''}</span>`}
-         <span style="color:#6b7280;font-size:0.75em;text-align:right;">${p.arMeasure != null && !isNaN(p.arMeasure) ? parseFloat(p.arMeasure).toFixed(3) : ''}</span>
-         <span style="color:#6b7280;font-size:0.75em;text-align:right;">${p.odMeasure !== '' && p.odMeasure != null ? parseFloat(p.odMeasure).toFixed(3) : ''}</span>
+         ${isEq1 ? `<span style="text-align:left;">${p.lmDesc ? '<strong>EQUATES TO</strong> ' + esc(p.lmDesc) : 'EQUATES TO'}</span>` : `<span style="text-align:left;">${(p.lmDesc || p.desc) ? (isIABoundary ? esc(p.desc).replace(/\b(RIGHT|LEFT)\b/, '<strong>$1</strong>') : p.type === 'routebrklm' ? esc(p.desc).replace(/\b((?:RTE|ROUTE)\s+(?:BRK|BREAK))\b/g, '<strong>$1</strong>') : p.type === 'routebreak' ? esc(p.desc).replace(/^(ROUTE (?:BREAK|RESUME))/, '<strong>$1</strong>') : esc(p.lmDesc || p.desc)) : ''}</span>`}
+         <span style="color:#6b7280;font-size:0.75em;text-align:right;">${p.arMeasure != null && !isNaN(p.arMeasure) ? (v => Math.abs(v) < 0.0005 ? (0).toFixed(3) : v.toFixed(3))(parseFloat(p.arMeasure)) : ''}</span>
+         <span style="color:#6b7280;font-size:0.75em;text-align:right;">${p.odMeasure !== '' && p.odMeasure != null ? (v => Math.abs(v) < 0.0005 ? (0).toFixed(3) : v.toFixed(3))(parseFloat(p.odMeasure)) : ''}</span>
        </li>`;
   }
 
@@ -2713,8 +2757,7 @@
                    : '';
     const hasPmPrefix   = p.pmPrefix && p.pmPrefix !== '.';
     const pmPrefixStyle = hasPmPrefix ? ' color:#991b1b; font-weight:bold;' : '';
-    const isIndAlignEq2 = p.type === 'equation' && p.isSecondEq && p.pmSuffix === 'L';
-    const displayedHg   = isIndAlignEq2 ? 'E' : (p.pmSuffix === 'L' ? 'L' : (p.hwyGroup || ''));
+    const displayedHg   = p.pmSuffix === 'L' ? 'L' : (p.hwyGroup || '');
     const hgColor       = displayedHg === 'R' ? '#1d4ed8' : displayedHg === 'L' ? '#7c3aed' : '';
     const hgFStyle      = hgColor ? ` style="color:${hgColor};"` : '';
     const ftStyle       = hgColor ? ` style="padding-left:3ch; color:${hgColor};"` : ' style="padding-left:3ch"';
@@ -2724,13 +2767,13 @@
       <td${eqBlack}>${p.cityCode  ? esc(p.cityCode)         : ''}</td>
       <td style="text-align:right;${pmPrefixStyle}">${hasPmPrefix ? esc(p.pmPrefix) : ''}</td>
       <td style="text-align:center">${esc(padMeasure(p.pmMeasure))}</td>
-      <td>${p.type === 'equation' ? (p.isSecondEq && p.pmSuffix !== 'L' ? 'E' : '') : (p.pmSuffix === 'E' ? 'E' : '')}</td>
+      <td>${p.type === 'equation' ? (p.isSecondEq ? 'E' : '') : (p.pmSuffix === 'E' ? 'E' : '')}</td>
       ${isEq1
-        ? `<td></td><td></td><td></td><td style="text-align:left">EQUATES TO</td>`
-        : `<td${hgFStyle}>${isIndAlignEq2 ? 'E' : p.pmSuffix === 'L' ? 'L' : p.hwyGroup ? esc(p.hwyGroup) : ''}</td>
+        ? `<td></td><td></td><td></td><td style="text-align:left">${p.lmDesc ? '<strong>EQUATES TO</strong> ' + esc(p.lmDesc) : 'EQUATES TO'}</td>`
+        : `<td${hgFStyle}>${p.pmSuffix === 'L' ? 'L' : p.hwyGroup ? esc(p.hwyGroup) : ''}</td>
            <td${ftStyle}>${p.featureType ? esc(p.featureType) : ''}</td>
            <td style="text-align:center">${distToNext}</td>
-           <td style="text-align:left">${p.desc ? (isIABoundary ? esc(p.desc).replace(/\b(RIGHT|LEFT)\b/, '<strong>$1</strong>') : p.type === 'routebrklm' ? esc(p.desc).replace(/\b((?:RTE|ROUTE)\s+(?:BRK|BREAK))\b/g, '<strong>$1</strong>') : p.type === 'routebreak' ? esc(p.desc).replace(/^(ROUTE (?:BREAK|RESUME))/, '<strong>$1</strong>') : esc(p.desc)) : ''}</td>`
+           <td style="text-align:left">${(p.lmDesc || p.desc) ? (isIABoundary ? esc(p.desc).replace(/\b(RIGHT|LEFT)\b/, '<strong>$1</strong>') : p.type === 'routebrklm' ? esc(p.desc).replace(/\b((?:RTE|ROUTE)\s+(?:BRK|BREAK))\b/g, '<strong>$1</strong>') : p.type === 'routebreak' ? esc(p.desc).replace(/^(ROUTE (?:BREAK|RESUME))/, '<strong>$1</strong>') : esc(p.lmDesc || p.desc)) : ''}</td>`
       }
     </tr>`;
   }
@@ -3219,7 +3262,7 @@
         p.pmSuffix === 'L' ? 'L' : (p.hwyGroup ?? ''),
         p.featureType ?? '',
         p.crossRouteFormatted ? '------->' : p.hasCrossRoute ? '*P*' : p.featureType !== 'R' && p.featureType !== 'I' && length !== '' ? padMeasure(length) : '',
-        p.desc        ?? ''
+        p.lmDesc != null ? p.lmDesc : (p.desc ?? '')
       ];
     });
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);

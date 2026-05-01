@@ -162,7 +162,7 @@ Equation points mark locations where one PM numbering system ends and another be
 
 ### Data Source
 
-Layer 1 (PM network calibration points, `NetworkId=2`). Queried using `RouteId LIKE '${county}${route}%'` (e.g., `TUO108%`). Each calibration point carries its PM measure and a `RouteId` that encodes:
+Layer 1 (PM network calibration points, `NetworkId=2`). When a county is specified, queried using `RouteId LIKE '${county}${route}%'` (e.g., `TUO108%`). When county=All, layer 85 is queried first to discover all counties on the route; OR'd `LIKE` clauses cover all counties. Each calibration point carries its PM measure and a `RouteId` that encodes:
 
 | Position | Field | Example |
 |---|---|---|
@@ -185,8 +185,10 @@ Points paired in Pass 1 are excluded from Pass 2.
 
 **Pass 2 — AR fallback:** For unpaired points, any two points within AR ≤ 0.005 of each other are paired. A candidate pair is skipped if:
 - PMs are equal to 3dp (duplicate RouteId variants of the same calibration point)
-- AR < 0.0005 AND PM difference < threshold (0.01 for L-suffix pairs, 0.5 otherwise) — near-identical duplicates
+- AR < 0.0005 AND PM difference < threshold (0.01 for L-suffix pairs, 0.001 otherwise) — near-identical duplicates
 - PM pair key already used (prevents double-pairing)
+
+OD matching is **not** required — at genuine equation points the OD network has a discontinuity, so both sides intentionally produce different OD values.
 
 Each point pairs with at most one other.
 
@@ -198,6 +200,17 @@ Each point pairs with at most one other.
 | `arMeasure` | lower AR | higher AR |
 | `pmSuffix` | from RouteId | `'E'` (rendering marker), or `'L'` if both points are L-suffix |
 | Rendered label | `EQUATES TO` spanning columns | normal PM row with `E` in suffix column |
+
+### Landmark Enrichment
+
+If exactly one landmark shares the same PM prefix + measure (within 0.001) as eq1 or eq2, that landmark's description is absorbed into the equation row and the standalone landmark row is suppressed.
+
+- **eq1 row**: "EQUATES TO" becomes `EQUATES TO landmark desc` (keyword in bold)
+- **eq2 row**: landmark desc appears in the description column
+
+This is independent of the route-break landmark enrichment. Equation pairs already handled by the route-break equation logic are excluded from this pass.
+
+---
 
 ### Sorting
 
