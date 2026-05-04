@@ -2067,9 +2067,21 @@
       const scopedArVals1 = scopedPairs1.map(p => p.arMeasure).filter(v => v != null && isFinite(v));
       const scopedArMin1  = scopedArVals1.length ? Math.min(...scopedArVals1) - 0.01 : -Infinity;
       const scopedArMax1  = scopedArVals1.length ? Math.max(...scopedArVals1) + 0.01 :  Infinity;
-      const filteredEqPairs1 = county
+      let filteredEqPairs1 = (county || district)
         ? equationPairs.filter(p => p.arMeasure != null && p.arMeasure >= scopedArMin1 && p.arMeasure <= scopedArMax1)
         : equationPairs;
+      // When district-scoped with all counties, drop equation pairs that cross into a
+      // county outside the district (e.g. a boundary equation at the start/end of the route).
+      if (district && !county) {
+        const scopedCounties = new Set(scopedPairs1.map(p => p.county).filter(Boolean));
+        if (scopedCounties.size > 0) {
+          const crossDistrictPairIds = new Set(
+            filteredEqPairs1.filter(p => p.county && !scopedCounties.has(p.county)).map(p => p.eqPairId)
+          );
+          if (crossDistrictPairIds.size > 0)
+            filteredEqPairs1 = filteredEqPairs1.filter(p => !crossDistrictPairIds.has(p.eqPairId));
+        }
+      }
       const dataPairs1 = [...scopedPairs1, ...filteredEqPairs1];
       const dataArVals1 = dataPairs1.map(p => p.arMeasure).filter(v => v != null && isFinite(v));
       const dataArMin1  = dataArVals1.length ? Math.min(...dataArVals1) - 0.01 : -Infinity;
