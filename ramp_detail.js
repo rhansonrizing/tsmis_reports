@@ -44,14 +44,16 @@
         if (!onOffMap.has(n))      onOffMap.set(n,      f.attributes?.Ramp_On_Off_Ind ?? null);
         if (!rampDesignMap.has(n)) rampDesignMap.set(n, f.attributes?.Ramp_Design     ?? '');
       }
-      return { descMap, area4Map, onOffMap, rampDesignMap };
+
+      const noMatchSet = new Set(allPairs.map(p => p.name).filter(n => !descMap.has(n)));
+      return { descMap, area4Map, onOffMap, rampDesignMap, noMatchSet };
     };
 
-    const [{ descMap, area4Map, onOffMap, rampDesignMap }, hwyMap, cityMap, popMap, odMap, { aadtYearMap, aadtMap }] = await Promise.all([
+    const [{ descMap, area4Map, onOffMap, rampDesignMap, noMatchSet }, hwyMap, cityMap, popMap, odMap, { aadtYearMap, aadtMap }] = await Promise.all([
       fetchDescriptions(),
       queryRangeLayer(allPairs, 116, 'Highway_Group'),
       queryRangeLayer(allPairs, 74,  'City_Code'),
-      queryRangeLayer(allPairs, 130, 'Population_Code'),
+      queryRangeLayer(allPairs, 130, 'Population_Code', 'BeginODMeasure', 'EndODMeasure'),
       translateToOD(allPairs),
       queryAadt(allPairs)
     ]);
@@ -60,12 +62,13 @@
       return ({
       name:        p.name,
       featureType: 'R',
+      noLinearEvent: noMatchSet.has(p.name),
       desc:        descMap.get(p.name)  ?? '',
       hwyGroup:    hwyMap.get(p.name)   ?? '',
-      area4:       area4Map.get(p.name) ?? null,
-      cityCode:    cityMap.get(p.name)  ?? '',
-      popCode:     popMap.get(p.name)   ?? '',
-      onOff:       onOffMap.get(p.name)       ?? null,
+      area4:       area4Map.get(p.name)    ?? null,
+      cityCode:    cityMap.get(p.name)    ?? '',
+      popCode:     popMap.get(p.name)     ?? '',
+      onOff:       onOffMap.get(p.name)      ?? null,
       rampDesign:  rampDesignMap.get(p.name) ?? '',
       aadtYear:    aadtYearMap.get(p.name) ?? '',
       aadt:        aadtMap.get(p.name)     ?? null,
@@ -76,6 +79,7 @@
       pmSuffix:    p.pmSuffix ?? '.',
       pmMeasure:   p.pmMeasure,
       odMeasure:   odMap.get(p.name)   ?? '',
+      arMeasure:   p.arMeasure,
       startDate:   p.startDate,
       endDate:     p.endDate
       });
@@ -83,6 +87,14 @@
 
     const onOffFilter = getOnOffFilter();
     const filtered = onOffFilter === null ? results : results.filter(r => r.onOff === onOffFilter);
+    filtered.sort((a, b) => {
+      const aOd = parseFloat(a.odMeasure);
+      const bOd = parseFloat(b.odMeasure);
+      if (isNaN(aOd) && isNaN(bOd)) return 0;
+      if (isNaN(aOd)) return 1;
+      if (isNaN(bOd)) return -1;
+      return aOd - bOd;
+    });
     showRampResults('success', null, filtered);
   }
 
@@ -176,19 +188,21 @@
   // Renders a single result row as an HTML <li> string
   function renderItem(p, idx) {
     return `<li class="ramp-item ramp-col-template">
-         <span>${p.district && p.county ? `${esc(p.district)}-${esc(String(p.county).padEnd(3, '.'))}-${esc(_routeLabel)}` : ''}</span>
+         <span>${p.district && p.county ? `${esc(p.district)}-${esc(String(p.county).replace(/\.$/, ''))}-${esc(_routeLabel)}` : ''}</span>
          <span>${p.pmPrefix && p.pmPrefix !== '.' ? esc(p.pmPrefix) : ''}</span>
          <span>${esc(padMeasure(p.pmMeasure))}</span>
          <span>${p.startDate != null ? esc(formatDate(p.startDate)) : ''}</span>
          <span>${p.pmSuffix === 'L' ? 'L' : p.hwyGroup ? esc(p.hwyGroup) : ''}</span>
-         <span>${p.area4 === 1 ? 'Y' : p.area4 === 0 ? 'N' : ''}</span>
+         <span>${p.noLinearEvent ? '-' : p.area4 === 1 ? 'Y' : p.area4 === 0 ? 'N' : ''}</span>
          <span>${p.cityCode ? esc(p.cityCode) : ''}</span>
          <span>${p.popCode ? esc(p.popCode) : ''}</span>
-         <span>${p.onOff === 0 ? 'F' : p.onOff === 1 ? 'N' : p.onOff === 2 ? 'T' : ''}</span>
+         <span>${p.noLinearEvent ? '-' : p.onOff === 0 ? 'F' : p.onOff === 1 ? 'N' : p.onOff === 2 ? 'T' : ''}</span>
          <span>${p.aadtYear ? esc(p.aadtYear) : ''}</span>
          <span>${p.aadt != null ? String(p.aadt).padStart(6, '0') : ''}</span>
-         <span>${p.rampDesign ? esc(p.rampDesign) : ''}</span>
-         <span>${p.desc ? esc(p.desc) : ''}</span>
+         <span>${p.noLinearEvent ? '-' : p.rampDesign ? esc(p.rampDesign) : ''}</span>
+         <span>${p.noLinearEvent ? '<i>NO RAMP LINEAR EVENT</i>' : p.desc ? esc(p.desc) : ''}</span>
+         <span style="color:#888;font-size:0.8em">${p.arMeasure != null ? parseFloat(p.arMeasure).toFixed(3) : ''}</span>
+         <span style="color:#888;font-size:0.8em">${p.odMeasure !== '' && p.odMeasure != null ? parseFloat(p.odMeasure).toFixed(3) : ''}</span>
        </li>`;
   }
 
@@ -240,6 +254,8 @@
          <span>ADT</span>
          <span>T<br>Y</span>
          <span>Description</span>
+         <span style="color:#888;font-size:0.8em">AR</span>
+         <span style="color:#888;font-size:0.8em">OD</span>
        </div>`;
 
     const items = pageSlice.map((p, i) => renderItem(p, start + i)).join('');

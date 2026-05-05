@@ -1560,9 +1560,13 @@ async function loadCountyCodeDomain() {
     }))).flat();
 
     const byRoute = new Map();
+    const seenFeature = new Set();
     for (const f of allFeatures) {
       const rid = f.attributes?.RouteID;
       if (rid == null) continue;
+      const dedupeKey = `${rid}|${f.attributes?.[fromField]}|${f.attributes?.[toField]}|${f.attributes?.[fieldName]}`;
+      if (seenFeature.has(dedupeKey)) continue;
+      seenFeature.add(dedupeKey);
       if (!byRoute.has(rid)) byRoute.set(rid, []);
       byRoute.get(rid).push(f);
     }
@@ -1609,6 +1613,7 @@ async function loadCountyCodeDomain() {
       const match = matches.length > 1
         ? matches.reduce((best, f) => f.attributes[fromField] > best.attributes[fromField] ? f : best)
         : matches[0];
+
       map.set(p.name, match?.attributes?.[fieldName] ?? '');
     }
     return map;
@@ -1720,7 +1725,7 @@ async function loadCountyCodeDomain() {
 
     const rows = _allResults.map((p) => {
       return [
-        (p.district && p.county) ? `${p.district}-${String(p.county).padEnd(3, '.')}-${_routeLabel}` : '',
+        (p.district && p.county) ? `${p.district}-${String(p.county).replace(/\.$/, '')}-${_routeLabel}` : '',
         (p.pmPrefix && p.pmPrefix !== '.') ? p.pmPrefix : '',
         padMeasure(p.pmMeasure),
         p.startDate != null ? formatDate(p.startDate) : '',

@@ -356,7 +356,7 @@
 
     .ramp-col-template {
       display: grid;
-      grid-template-columns: 11ch 2ch 9ch 10ch 4ch 3ch 7ch 2ch 2ch 4ch 10ch 2ch 4fr;
+      grid-template-columns: 11ch 2ch 9ch 10ch 4ch 3ch 7ch 2ch 2ch 4ch 10ch 2ch 4fr 8ch 8ch;
       gap: 0.5rem;
       align-items: center;
     }
@@ -411,13 +411,15 @@
       font-size: 0.7rem;
       text-align: center;
     }
-    .ramp-list-header > span:last-child {
+    .ramp-list-header > span:last-child,
+    .ramp-list-header > span:nth-child(13) {
       text-align: left;
     }
     .ramp-item > span {
       text-align: center;
     }
-    .ramp-item > span:last-child {
+    .ramp-item > span:last-child,
+    .ramp-item > span:nth-child(13) {
       text-align: left;
     }
     .ramp-item > span:nth-child(n+5) {

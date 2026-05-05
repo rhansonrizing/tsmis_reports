@@ -154,16 +154,9 @@
     const [hwyMap, { onOffMap, rampDesignMap }, popMap, cityMap] = await Promise.all([
       queryRangeLayer(allPairs, 116, 'Highway_Group'),
       rs_queryOnOff(allPairs),
-      queryRangeLayer(allPairs, 130, 'Population_Code'),
+      queryRangeLayer(allPairs, 130, 'Population_Code', 'BeginODMeasure', 'EndODMeasure'),
       queryRangeLayer(allPairs, 74,  'City_Code')
     ]);
-
-    // Debug: log any ramp names not found in layer 131
-    const missing = allPairs.filter(p => !onOffMap.has(p.name));
-    if (missing.length > 0) {
-      console.warn(`[rs_buildSummary] ${missing.length} ramp(s) not found in layer 131 onOffMap:`);
-      missing.forEach(p => console.warn(`  name: "${p.name}"  routeId: "${p.routeId}"  arMeasure: ${p.arMeasure}`));
-    }
 
     // Apply on/off filter if selected
     const onOffFilter = getOnOffFilter();
@@ -178,7 +171,7 @@
     for (const p of pairs) {
       const pmSuffix = (p.pmSuffix || '').trim().toUpperCase();
       const rawHwy   = (hwyMap.get(p.name) || '').trim().toUpperCase();
-      const code     = pmSuffix === 'L' ? 'L' : rawHwy;
+const code     = pmSuffix === 'L' ? 'L' : rawHwy;
       if (known.has(code)) counts.set(code, counts.get(code) + 1);
       else othersCount++;
     }

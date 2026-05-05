@@ -494,7 +494,7 @@ async function intd_queryIntersections(segments, routeNum, district = null, coun
     const [hgMap, cityMap, popMap] = await Promise.all([
       queryRangeLayer(rlPairs, 116, 'Highway_Group'),
       queryRangeLayer(rlPairs, 74,  'City_Code'),
-      queryRangeLayer(rlPairs, 130, 'Population_Code')
+      queryRangeLayer(rlPairs, 130, 'Population_Code', 'BeginODMeasure', 'EndODMeasure')
     ]);
     for (const r of records) {
       r.hg   = hgMap.get(r._name)   ?? '';
