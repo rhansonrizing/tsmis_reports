@@ -70,11 +70,11 @@ For local dev: change `oauthRedirectUrl` to `http://localhost:5500/index.html`.
 | 123 | Landmarks (EV_SHS_LANDMARK) | Point Events | Landmarks_Short/Long, ARMeasure, RouteID, PMPrefix/Suffix/Measure | Highway landmarks; also drives route dropdown in `onCountyChange` |
 | 130 | Population Code | Range Events | Population_Code, FromARMeasure, ToARMeasure | Rural/Urban classification |
 | 131 | Ramp Attributes | Feature Table | Ramp_Name, Ramp_Description, Ramp_On_Off_Ind (0/1/2), Ramp_Design, Area4_Ind | Ramp descriptions & classification |
-| 132 | Ramp Point Events (EV_SHS_RAMP) | Point Events | Ramp_Name, ARMeasure, ODMeasure, RouteID, PMPrefix/Suffix/Measure, County, District | **Primary ramp data source**; paginated (1000/page) |
+| 132 | Ramp Point Events (EV_SHS_RAMP) | Point Events | Ramp_Name, ARMeasure, ODMeasure, RouteID, RouteNum, RouteSuffix, Alignment, PMPrefix/Suffix/Measure, County, District | **Primary ramp data source**; paginated (1000/page); RouteNum and Alignment fetched to support PM-based AADT lookup |
 | 133 | Route Breaks (EV_SHS_ROUTE_BREAK) | Point Events | ARMeasure, RouteID, Route_Break_Type | Route discontinuities (Route Break / Route Resume) |
 | 149 | Intersection AOI | Polygons | — | Intersection area-of-interest polygons (legacy path; no longer used) |
 | 151 | Intersection Attributes | Feature Table | INTERSECTION_ID, County_Code, District_Code, Main_RouteNum/PMPrefix/PMSuffix/PMMeasure, Cross_* | Intersection details; queried for both main-route and cross-route intersections; also provides county code domain for `loadCountyCodeDomain` |
-| 157 | AADT | Point Events | AADT_YEAR, AADT, LRSFromDate | Average Annual Daily Traffic |
+| 157 | AADT | Point Events | RouteNum, RouteSuffix, Alignment, County, PMPrefix, PMSuffix, PMMeasure, AADT_YEAR, AADT, AADT_CODE | Average Annual Daily Traffic; matched to ramp pairs by PM attribution (RouteNum+RouteSuffix+Alignment+County+PMPrefix+PMSuffix+PMMeasure ±0.0005); highest AADT_YEAR wins, AADT_CODE=1 breaks ties |
 | 215 | HSL Crash Data (Route/District/County Index) | Feature Table | routeId, fromMeasure, District_Code, County, RouteNum, hslDescription, Highway_Group, FileType, distToNextLandmark, PMPrefix, PMSuffix, PMMeasure, LRSFromDate | **"Push to Crash"** target: `hsl_exportEdit` deletes existing records in the AR range and writes current HSL results; also drives cascading dropdown data |
 | 304 | Route Directions | Table | ROUTE, FROM_, TO_ | Human-readable directional labels |
 
@@ -712,11 +712,12 @@ This ensures equation point pairs always appear adjacently in the final output, 
 **Location:** `shared.js`
 **Called by:** both `hsl_runDistrictRouteMode` and `hsl_runTranslate` after the sort pipeline.
 
-When two equation-pair records have the same AR to 3dp, the AR-based sort may put them in the wrong order relative to surrounding context. `fixEqPairOrder` scans for adjacent eq1/eq2 pairs at the same 3dp AR, checks the nearest preceding and following H-type record prefixes, and swaps the PM-related fields (`pmPrefix, pmSuffix, pmMeasure, routeId, arMeasure, odMeasure, county, name`) if eq2's prefix better matches the preceding context than eq1's does.
+When two equation-pair records have the same AR to 3dp, the AR-based sort may put them in the wrong order relative to surrounding context. `fixEqPairOrder` scans for adjacent eq1/eq2 pairs at the same 3dp AR and swaps the PM-related fields (`pmPrefix, pmSuffix, pmMeasure, routeId, arMeasure, odMeasure, county, name`) when the surrounding context indicates the pair is reversed.
 
 - Only swaps PM-related fields; structural fields (`desc, isSecondEq, eqPairId, type`) stay in place so rendering labels are unaffected.
-- Uses H-type context records only (landmarks, route breaks, city boundaries) — ramps and intersections can have stale pmPrefix values.
-- Primary signal: the preceding H record should share its prefix with eq1. Secondary (no prev H): eq2 should match the following context.
+- Context scan includes H, I, and R records — any non-equation record. Records whose PMMeasure is within 0.001 of either eq point's PM are excluded as co-located and unreliable.
+- **Prefix signal** (eq1Pfx ≠ eq2Pfx): primary — preceding context should share prefix with eq1; secondary (no preceding) — following context should match eq2.
+- **County signal** (eq1Pfx = eq2Pfx, e.g. county-line PM reset where both sides have no prefix): same primary/secondary logic applied to county instead of prefix. If counties also match or no context is found, order is left as-is.
 
 ### Full Pipeline After Sort
 

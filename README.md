@@ -54,8 +54,8 @@ Authentication uses OAuth 2.0 implicit flow. The redirect URL must match a regis
 | 116 | Highway Group |
 | 130 | Population Code |
 | 131 | Ramp attributes (On/Off, Ramp Design, Description) |
-| 132 | Ramp point events (primary source for ramp pairs, PMSuffix) |
-| 157 | AADT |
+| 132 | Ramp point events (primary source for ramp pairs; fields include RouteNum, Alignment for AADT matching) |
+| 157 | AADT — matched to ramps by PM attribution (RouteNum, RouteSuffix, Alignment, County, PMPrefix, PMSuffix, PMMeasure); highest AADT_YEAR selected, AADT_CODE=1 breaks ties |
 
 ## HSL Record Suppression Logic
 
@@ -225,18 +225,17 @@ This is independent of the route-break landmark enrichment. Equation pairs alrea
 
 ### `fixEqPairOrder`
 
-When eq1 and eq2 share the same AR to 3dp, the lower-AR sort tiebreak may not correctly determine which PM belongs on the departing side vs. the arriving side. This pass corrects the order by reading prefix context from surrounding records.
+When eq1 and eq2 share the same AR to 3dp, the lower-AR sort tiebreak may not correctly determine which PM belongs on the departing side vs. the arriving side. This pass corrects the order by reading context from surrounding records.
 
 **Algorithm:**
-1. For each consecutive eq1/eq2 pair that share the same AR to 3dp and have different PM prefixes:
-2. Scan backward past ramp and intersection records to find the nearest preceding **H-type** record (landmark, route break, city boundary). Scan forward similarly for the nearest following H-type record.
-3. **Primary signal:** if eq2's prefix matches the preceding H context and eq1's does not → swap.
-4. **Secondary signal** (no preceding H record found): if eq1's prefix matches the following H context and eq2's does not → swap.
-5. Swaps only PM-data fields (`pmPrefix`, `pmSuffix`, `pmMeasure`, `routeId`, `arMeasure`, `odMeasure`, `county`, `name`). Structural fields (`desc`, `isSecondEq`, `eqPairId`, `type`) stay in place so rendering labels are unaffected.
+1. For each consecutive eq1/eq2 pair sharing the same AR to 3dp:
+2. Scan outward in both directions for the nearest context record. Any non-equation record qualifies **except** those whose PMMeasure is within 0.001 of either eq point's PM (co-located records carry the arriving-system PM and give a wrong signal).
+3. **If prefixes differ** — primary signal: preceding record should share prefix with eq1 (departing side); if eq2 matches instead → swap. Secondary (no preceding): following record should match eq2; if eq1 matches instead → swap.
+4. **If prefixes are the same** (e.g. county-line PM reset, both sides have no prefix) — apply the same primary/secondary logic using **county** instead of prefix.
+5. If both prefix and county are ambiguous or no context is found, leave the order as-is.
+6. Swaps only PM-data fields (`pmPrefix`, `pmSuffix`, `pmMeasure`, `routeId`, `arMeasure`, `odMeasure`, `county`, `name`). Structural fields (`desc`, `isSecondEq`, `eqPairId`, `type`) stay in place so rendering labels are unaffected.
 
-**Prefix normalization:** `'.'` and `''` are treated as equivalent (no prefix) before all comparisons. Equation records store "no prefix" as `''`; landmark and other records store it as `'.'`.
-
-**Why H-type only:** Ramp and intersection records can carry a PM prefix belonging to the *arriving* PM system, which would give the wrong signal if used as context. Only landmark-class records reliably reflect the established PM system at that location.
+**Prefix normalization:** `'.'` and `''` are treated as equivalent (no prefix) before all comparisons.
 
 ---
 

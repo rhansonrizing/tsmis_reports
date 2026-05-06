@@ -1080,39 +1080,60 @@ async function loadCountyCodeDomain() {
       // Normalize prefix: treat '.' and '' as equivalent (no prefix).
       // Equation records store dot-prefix as '' but landmark/other records store '.'.
       const normPfx = p => (p === '.' || p == null || p === '') ? '' : p;
-      const eq1Pfx = normPfx(eq1.pmPrefix);
-      const eq2Pfx  = normPfx(eq2.pmPrefix);
-      if (eq1Pfx === eq2Pfx) continue; // prefixes identical — no information to use
+      const eq1Pfx   = normPfx(eq1.pmPrefix);
+      const eq2Pfx   = normPfx(eq2.pmPrefix);
 
-      // Scan for context using H-type records only (landmarks, route breaks, city
-      // boundaries). Ramps and intersections can have pmPrefix values that belong
-      // to the *arriving* PM system and would give the wrong signal if used as
-      // pairs[i-1]/pairs[i+2] directly.
-      const isHCtx = p => p.type === 'landmark' || p.type === 'routebreak' ||
-                          p.type === 'citybegin' || p.type === 'cityend';
-      let prevPfx = null;
+      // Scan for the nearest context record on each side. Includes H, I, and R types;
+      // excludes equation records and any record whose PMMeasure matches either eq
+      // point (co-located records carry the arriving-system PM and give a wrong signal).
+      const eq1Pm = parseFloat(eq1.pmMeasure);
+      const eq2Pm = parseFloat(eq2.pmMeasure);
+      const isCtx = p => {
+        if (p.type === 'equation') return false;
+        const pm = parseFloat(p.pmMeasure);
+        if (!isNaN(pm)) {
+          if (!isNaN(eq1Pm) && Math.abs(pm - eq1Pm) < 0.001) return false;
+          if (!isNaN(eq2Pm) && Math.abs(pm - eq2Pm) < 0.001) return false;
+        }
+        return true;
+      };
+      let prevPfx = null, prevCounty = null;
       for (let k = i - 1; k >= 0; k--) {
-        if (!isHCtx(pairs[k])) continue;
-        prevPfx = normPfx(pairs[k].pmPrefix);
+        if (!isCtx(pairs[k])) continue;
+        prevPfx    = normPfx(pairs[k].pmPrefix);
+        prevCounty = pairs[k].county ?? null;
         break;
       }
-      let nextPfx = null;
+      let nextPfx = null, nextCounty = null;
       for (let k = i + 2; k < pairs.length; k++) {
-        if (!isHCtx(pairs[k])) continue;
-        nextPfx = normPfx(pairs[k].pmPrefix);
+        if (!isCtx(pairs[k])) continue;
+        nextPfx    = normPfx(pairs[k].pmPrefix);
+        nextCounty = pairs[k].county ?? null;
         break;
       }
 
-      // Primary signal: the nearest preceding H record should share its prefix with
-      // eq1 (the departure side of the old PM system). If eq2's prefix matches the
-      // preceding context and eq1's does not, the pair is reversed — swap it.
-      // Secondary signal (when no prev H record): eq2 should match the following
-      // context. If eq1 matches next but eq2 does not, swap.
       let shouldSwap = false;
-      if (prevPfx !== null) {
-        if (eq2Pfx === prevPfx && eq1Pfx !== prevPfx) shouldSwap = true;
-      } else if (nextPfx !== null) {
-        if (eq1Pfx === nextPfx && eq2Pfx !== nextPfx) shouldSwap = true;
+      if (eq1Pfx !== eq2Pfx) {
+        // Prefix-based signal: preceding record should share prefix with eq1 (departing
+        // side). If eq2 matches the preceding context instead — swap.
+        // Secondary (no preceding): following record should match eq2 (arriving side).
+        if (prevPfx !== null) {
+          if (eq2Pfx === prevPfx && eq1Pfx !== prevPfx) shouldSwap = true;
+        } else if (nextPfx !== null) {
+          if (eq1Pfx === nextPfx && eq2Pfx !== nextPfx) shouldSwap = true;
+        }
+      } else {
+        // Same prefix (e.g. county-line PM reset, both sides have no prefix) —
+        // fall back to county as the distinguishing signal.
+        const eq1County = eq1.county ?? null;
+        const eq2County = eq2.county ?? null;
+        if (eq1County !== null && eq2County !== null && eq1County !== eq2County) {
+          if (prevCounty !== null) {
+            if (eq2County === prevCounty && eq1County !== prevCounty) shouldSwap = true;
+          } else if (nextCounty !== null) {
+            if (eq1County === nextCounty && eq2County !== nextCounty) shouldSwap = true;
+          }
+        }
       }
       if (!shouldSwap) continue;
 
@@ -1383,7 +1404,7 @@ async function loadCountyCodeDomain() {
     // Layer 132 is a point event layer — use standard feature layer query
     const body = new URLSearchParams({
       where,
-      outFields:      'Ramp_Name,RouteID,ARMeasure,County,RouteSuffix,PMPrefix,PMSuffix,PMMeasure,District,InventoryItemStartDate,InventoryItemEndDate',
+      outFields:      'Ramp_Name,RouteID,ARMeasure,County,RouteNum,RouteSuffix,Alignment,PMPrefix,PMSuffix,PMMeasure,District,InventoryItemStartDate,InventoryItemEndDate',
       orderByFields:  'ARMeasure ASC',
       returnGeometry: 'true',
       ...versionParam(),
@@ -1453,7 +1474,9 @@ async function loadCountyCodeDomain() {
           arMeasure:   a.ARMeasure,
           odMeasure:   '',
           county:      a.County      ?? '',
+          routeNum:    a.RouteNum    ?? '',
           routeSuffix: a.RouteSuffix ?? '',
+          alignment:   a.Alignment   ?? '',
           pmPrefix:    a.PMPrefix    ?? '',
           pmSuffix:    a.PMSuffix    ?? '.',
           pmMeasure:   a.PMMeasure   ?? '',

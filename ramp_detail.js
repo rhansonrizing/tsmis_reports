@@ -98,31 +98,31 @@
     showRampResults('success', null, filtered);
   }
 
-  // Returns { aadtYearMap, aadtMap } from layer 157 for the given pairs
+  // Returns { aadtYearMap, aadtMap } from layer 157 for the given pairs,
+  // matched by PM attribution (County, RouteNum, RouteSuffix, Alignment, PMPrefix, PMSuffix, PMMeasure).
+  // Among candidates: highest AADT_YEAR wins; ties broken by AADT_CODE = 1.
   async function queryAadt(pairs) {
     const aadtYearMap = new Map();
     const aadtMap     = new Map();
     if (pairs.length === 0) return { aadtYearMap, aadtMap };
 
-    // Query layer 157 spatially using bounding envelope of each chunk's ramp geometries
-    const CHUNK = 50;
-    const chunks = chunkArray(pairs, CHUNK);
+    const normPfx = v => (v === '.' ? '' : (v ?? ''));
 
-    const allFeatures = (await Promise.all(chunks.map(async chunk => {
-      const withGeo = chunk.filter(p => p.x != null && p.y != null);
-      if (withGeo.length === 0) return [];
-      const xMin = Math.min(...withGeo.map(p => p.x));
-      const xMax = Math.max(...withGeo.map(p => p.x));
-      const yMin = Math.min(...withGeo.map(p => p.y));
-      const yMax = Math.max(...withGeo.map(p => p.y));
-      const envelope = JSON.stringify({ xmin: xMin, ymin: yMin, xmax: xMax, ymax: yMax, spatialReference: { wkid: 3310 } });
+    // One query per unique (County, RouteNum, RouteSuffix, Alignment) combination
+    const routeGroups = new Map();
+    for (const p of pairs) {
+      if (!p.routeNum || !p.alignment) continue;
+      const key = `${p.county}|${p.routeNum}|${p.routeSuffix}|${p.alignment}`;
+      if (!routeGroups.has(key)) routeGroups.set(key, { county: p.county, routeNum: p.routeNum, routeSuffix: p.routeSuffix, alignment: p.alignment });
+    }
+
+    const featuresByKey = new Map();
+    await Promise.all([...routeGroups.entries()].map(async ([key, g]) => {
+      const where = `County = '${g.county}' AND RouteNum = '${g.routeNum}' AND RouteSuffix = '${g.routeSuffix}' AND Alignment = '${g.alignment}'`;
       const body = new URLSearchParams({
-        where:          '1=1',
-        geometry:       envelope,
-        geometryType:   'esriGeometryEnvelope',
-        spatialRel:     'esriSpatialRelIntersects',
-        outFields:      'OBJECTID,LRSFromDate,AADT_YEAR,AADT',
-        returnGeometry: 'true',
+        where,
+        outFields:      'County,RouteNum,RouteSuffix,Alignment,PMPrefix,PMSuffix,PMMeasure,AADT_YEAR,AADT,AADT_CODE',
+        returnGeometry: 'false',
         ...versionParam(),
         f:              'json',
         token:          _token
@@ -136,31 +136,35 @@
           const code = data.error.code;
           if (code === 498 || code === 499) { _token = null; login(); }
           console.error(`[queryAadt] API error ${code}: ${data.error.message}`);
-          return [];
+          featuresByKey.set(key, []);
+          return;
         }
-        return Array.isArray(data.features) ? data.features : [];
+        featuresByKey.set(key, Array.isArray(data.features) ? data.features.map(f => f.attributes) : []);
       } catch (e) {
         console.error('[queryAadt] error:', e.message);
-        return [];
+        featuresByKey.set(key, []);
       }
-    }))).flat();
+    }));
 
-    // For each ramp, find the layer 157 feature at the same x,y location,
-    // picking the most recent LRSFromDate when multiple records share that point
+    // Match each pair to layer 157 candidates by PM attributes
     for (const p of pairs) {
-      if (p.x == null || p.y == null) continue;
-      const candidates = allFeatures.filter(f => {
-        const fx = f.geometry?.x;
-        const fy = f.geometry?.y;
-        return fx != null && fy != null &&
-               Math.abs(fx - p.x) < 0.01 && Math.abs(fy - p.y) < 0.01;
-      });
-      const match = candidates.reduce((best, f) => {
-        if (!best) return f;
-        return (f.attributes?.LRSFromDate ?? 0) > (best.attributes?.LRSFromDate ?? 0) ? f : best;
+      if (!p.routeNum || !p.alignment) continue;
+      const key = `${p.county}|${p.routeNum}|${p.routeSuffix}|${p.alignment}`;
+      const features = featuresByKey.get(key) ?? [];
+      const pmMeasure = parseFloat(p.pmMeasure);
+      const candidates = features.filter(a =>
+        normPfx(a.PMPrefix) === normPfx(p.pmPrefix) &&
+        (a.PMSuffix ?? '.') === (p.pmSuffix ?? '.') &&
+        Math.abs(parseFloat(a.PMMeasure) - pmMeasure) < 0.0005
+      );
+      const match = candidates.reduce((best, a) => {
+        if (!best) return a;
+        if ((a.AADT_YEAR ?? 0) > (best.AADT_YEAR ?? 0)) return a;
+        if (a.AADT_YEAR === best.AADT_YEAR && a.AADT_CODE === 1 && best.AADT_CODE !== 1) return a;
+        return best;
       }, null);
-      aadtYearMap.set(p.name, match?.attributes?.AADT_YEAR ?? '');
-      aadtMap.set(p.name,     match?.attributes?.AADT      ?? null);
+      aadtYearMap.set(p.name, match?.AADT_YEAR != null ? String(match.AADT_YEAR) : '');
+      aadtMap.set(p.name,     match?.AADT      ?? null);
     }
     return { aadtYearMap, aadtMap };
   }
