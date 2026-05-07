@@ -21,6 +21,8 @@
     const isIABoundary  = p => p.type === 'landmark' &&
       (p.desc === 'BEGIN LEFT INDEPENDENT ALIGNMENT'  || p.desc === 'END LEFT INDEPENDENT ALIGNMENT' ||
        p.desc === 'BEGIN RIGHT INDEPENDENT ALIGNMENT' || p.desc === 'END RIGHT INDEPENDENT ALIGNMENT');
+    const isTemporaryConn = p => p.type === 'landmark' &&
+      p.desc != null && /^(BEGIN|END) TEMPORARY (CONNECTION|CONNECTOR)/i.test(p.desc);
     // Suffix is intentionally excluded: equation points carry pmSuffix 'E' while
     // realignment landmarks at the same location carry '.', so a suffix-aware key
     // would miss the match. County + prefix + measure is sufficient to identify the
@@ -45,9 +47,6 @@
         .filter(p => isIABoundary(p) && p.pmMeasure !== '' && p.pmMeasure != null && !isNaN(parseFloat(p.pmMeasure)))
         .map(pmKey)
     );
-    const naturalArMeasures = pairs
-      .filter(p => isNaturalH(p) && p.arMeasure != null && !isNaN(p.arMeasure))
-      .map(p => p.arMeasure);
     // AR measures where a BEGIN REALIGNMENT exists — an END REALIGNMENT at the
     // same point means the route transitions directly into an independent
     // alignment section (the realignment continues rather than ending).
@@ -61,14 +60,24 @@
                         p.pmMeasure !== '' && p.pmMeasure != null && !isNaN(parseFloat(p.pmMeasure)))
            .map(pmKey)
     );
+    // All IA boundary ARs: synthetic ia_bdry_* records plus layer 123 abbreviated variants
+    // (e.g. "END INDEP ALIGN-RT"). Used to suppress TEMPORARY CONNECTION landmarks that
+    // are made redundant by the independent alignment boundary at the same location.
+    const iaBoundaryArSet = pairs
+      .filter(p => p.type === 'landmark' && p.arMeasure != null && !isNaN(p.arMeasure) &&
+                   (isIABoundary(p) || (p.name?.startsWith('ia_bdry_')) || /INDEP/i.test(p.desc ?? '')))
+      .map(p => p.arMeasure);
     return pairs.filter(p => {
-      if (isIABoundary(p)) {
-        if (p.pmMeasure === '' || p.pmMeasure == null || isNaN(parseFloat(p.pmMeasure))) return true;
-        const m = parseFloat(p.pmMeasure);
-        if (m < 0 || Object.is(m, -0)) return false;
-        if (naturalPmKeys.has(pmKey(p))) return false;
+      if (isTemporaryConn(p)) {
         if (p.arMeasure != null && !isNaN(p.arMeasure) &&
-            naturalArMeasures.some(ar => Math.abs(ar - p.arMeasure) < 0.001)) return false;
+            iaBoundaryArSet.some(ar => Math.abs(ar - p.arMeasure) < 0.01)) return false;
+        return true;
+      }
+      if (isIABoundary(p)) {
+        if (p.pmMeasure !== '' && p.pmMeasure != null && !isNaN(parseFloat(p.pmMeasure))) {
+          const m = parseFloat(p.pmMeasure);
+          if (m < 0 || Object.is(m, -0)) return false;
+        }
         return true;
       }
       if (!isRealignment(p)) return true;
@@ -238,9 +247,9 @@
   //
   // Tier 1 — hsl_end_*/hsl_begin_*: always shown
   // Tier 2 — ia_bdry_*:             suppressed if hsl_end_*/hsl_begin_* at same AR
-  //                                  (natural-H suppression handled earlier by hsl_filterRealignmentLandmarks)
   // Tier 3 — city*:                 suppressed if hsl_end_*/hsl_begin_* or ia_bdry_* at same AR
-  // Tier 4 — county*:               suppressed if city*, hsl_end_*/hsl_begin_*, or ia_bdry_* at same AR
+  // County begin/end records are never suppressed here — the negative-OD/PM guard in
+  // hsl_filterCityBoundaries handles county begins that precede the queried range.
   function hsl_applySyntheticHierarchy(pairs) {
     const AR_TOL       = 0.001;
     const isHslTerminal = p => p.name?.startsWith('hsl_end_') || p.name?.startsWith('hsl_begin_');
@@ -268,14 +277,7 @@
       return !(anyWithin(hslArs, ar) || anyWithin(iaBdryArs, ar));
     });
 
-    const cityArs = afterCity.filter(isCityType).map(arOf).filter(a => a != null);
-
-    return afterCity.filter(p => {
-      if (!isCountyType(p)) return true;
-      const ar = arOf(p);
-      if (ar == null) return true;
-      return !anyWithin(cityArs, ar) && !anyWithin(hslArs, ar) && !anyWithin(iaBdryArs, ar);
-    });
+    return afterCity;
   }
 
   function renderUnresolvedSection(list) {
@@ -2427,6 +2429,9 @@
 
     // Equation landmark enrichment: if exactly one landmark shares the same
     // PM prefix+measure as eq1 or eq2, store its desc and suppress the landmark row.
+    // When multiple landmarks share the same PM and all have the same description
+    // (duplicates from P/S route alignments in layer 123), pick the one closest by
+    // AR to the eq row and suppress all of them.
     for (const [, eq] of eqPairs) {
       if (!eq.eq1 || !eq.eq2) continue;
       if (eq.eq2.isRouteBreakEquation) continue;
@@ -2438,9 +2443,20 @@
           normPfx(lm.pmPrefix) === normPfx(eqRow.pmPrefix) &&
           pmClose(lm.pmMeasure, eqRow.pmMeasure)
         );
-        if (matches.length === 1) {
-          eqRow.lmDesc = matches[0].desc;
-          suppressed.add(matches[0].name);
+        if (matches.length === 0) continue;
+        const allSameDesc = matches.every(lm => lm.desc === matches[0].desc);
+        if (matches.length === 1 || allSameDesc) {
+          let chosen = matches[0];
+          if (matches.length > 1) {
+            const eqAr = parseFloat(eqRow.arMeasure);
+            if (!isNaN(eqAr)) {
+              chosen = matches.reduce((best, lm) =>
+                Math.abs(parseFloat(lm.arMeasure) - eqAr) < Math.abs(parseFloat(best.arMeasure) - eqAr) ? lm : best
+              );
+            }
+          }
+          eqRow.lmDesc = chosen.desc;
+          for (const lm of matches) suppressed.add(lm.name);
         }
       }
     }
@@ -2587,6 +2603,7 @@
         hasCrossRoute:       (p.crossRouteFormatted ?? false) || p.crossPmMeasure != null,
         isSecondEq:           p.isSecondEq          ?? false,
         isRouteBreakEquation: p.isRouteBreakEquation ?? false,
+        lmDesc:      p.lmDesc ?? null,
         desc:        (() => {
           const base = (p.type === 'ramp' ? (descMap.get(p.name) ?? '') : (p.desc ?? '')).toUpperCase();
           if (p.type === 'intersection' && p.crossPmMeasure != null) {

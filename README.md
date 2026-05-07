@@ -127,17 +127,21 @@ If the realignment record has no valid PM measure it passes all three checks and
 
 Synthetic `BEGIN LEFT/RIGHT INDEPENDENT ALIGNMENT` and `END LEFT/RIGHT INDEPENDENT ALIGNMENT` records are constructed from layer 3 (PM network polyline features). Each feature's M values are the PM measures; the global min/max per PMSuffix (`L` or `R`) give the begin and end PM. Those PM measures are translated to AR and OD via `networkLayers/3/translate` (targets [4] AR and [5] OD).
 
-PM key for suppression is defined as `pmPrefix | pmMeasure.toFixed(3)` (suffix excluded, same as realignment landmarks; prefix `'.'` and `''` are both treated as no-prefix).
-
-An IA boundary record is suppressed (not added to the report) if any of the following are true:
+An IA boundary record is suppressed (not added to the report) only if:
 
 1. Its PM measure is **negative** or negative-zero (alignment boundary precedes the start of the queried segment).
-2. **Any FT=H record** has the **exact same PM key**.
-3. **Any FT=H record** has the **same AR measure** (within 0.001). This catches cases where the layer 123 stored `PMMeasure` and the layer 3 geometry M value disagree slightly despite resolving to the same AR.
 
-If the record has no valid PM measure it is always shown.
+If the record has no valid PM measure it is always shown. IA boundaries are never suppressed by coincident H records — they are authoritative structural markers.
 
 IA boundary records are excluded from distance calculations.
+
+---
+
+### BEGIN/END TEMPORARY CONNECTION/CONNECTOR Landmarks (`hsl_filterRealignmentLandmarks`)
+
+`BEGIN TEMPORARY CONNECTION`, `END TEMPORARY CONNECTION`, `BEGIN TEMPORARY CONNECTOR`, and `END TEMPORARY CONNECTOR` landmarks are suppressed when an IA boundary record exists at the **same AR** (within **0.01**). This avoids redundant rows when both records appear at the same location — the independent alignment boundary conveys the structural transition more precisely.
+
+If no IA boundary coincides, the TEMPORARY CONNECTION/CONNECTOR landmark is always shown.
 
 ---
 
@@ -203,10 +207,12 @@ Each point pairs with at most one other.
 
 ### Landmark Enrichment
 
-If exactly one landmark shares the same PM prefix + measure (within 0.001) as eq1 or eq2, that landmark's description is absorbed into the equation row and the standalone landmark row is suppressed.
+If one or more landmarks share the same PM prefix + measure (within 0.001) as eq1 or eq2, that landmark's description is absorbed into the equation row and the standalone landmark row(s) are suppressed.
 
 - **eq1 row**: "EQUATES TO" becomes `EQUATES TO landmark desc` (keyword in bold)
 - **eq2 row**: landmark desc appears in the description column
+
+When multiple matching landmarks all share the **same description** (e.g. duplicates from P- and S-route storage in layer 123), the one closest by AR to the equation row is used and all are suppressed. If the descriptions differ, enrichment is skipped (ambiguous case).
 
 This is independent of the route-break landmark enrichment. Equation pairs already handled by the route-break equation logic are excluded from this pass.
 

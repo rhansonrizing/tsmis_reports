@@ -262,14 +262,17 @@ Phase 5: Synthetic suppression + route break enrichment
   cityPairsForLookup = allPairs.filter(p => p.type === 'citybegin' || p.type === 'cityend')
     → snapshot BEFORE hsl_applySyntheticHierarchy removes city records at route terminals
   hsl_applySyntheticHierarchy(allPairs)
-    → tier-based suppression: hsl_end/begin_* > ia_bdry_* > city* > county*
+    → tier-based suppression: hsl_end/begin_* > ia_bdry_* > city*
+      (county begin/end are never suppressed here)
   hsl_applyRouteBreakEquations(allPairs)
     → pairs Route Break + Route Resume via routeBreakId; handles equation-pair display
     → route-break landmark enrichment: if exactly one landmark shares prefix+measure with a route break/resume,
       appends landmark desc to the route break/resume; suppresses the standalone landmark row
-    → equation landmark enrichment: if exactly one landmark shares prefix+measure with eq1 or eq2,
-      stores lmDesc on the eq record and suppresses the landmark row; eq1 renders
-      "<strong>EQUATES TO</strong> lmDesc", eq2 shows lmDesc in the description column
+    → equation landmark enrichment: if one or more landmarks share prefix+measure with eq1 or eq2,
+      stores lmDesc on the eq record and suppresses all matching landmark rows; eq1 renders
+      "<strong>EQUATES TO</strong> lmDesc", eq2 shows lmDesc in the description column.
+      When multiple matches share the same description (P/S route duplicates from layer 123),
+      the closest by AR is used and all are suppressed. If descriptions differ, enrichment is skipped.
     → consecutive ordering: ensures ROUTE BREAK and ROUTE RESUME are on adjacent lines
       (moves records sorted between them to just after the ROUTE RESUME)
 
@@ -491,7 +494,8 @@ Suppression tiers (lower tiers hidden when higher tier exists at same AR ± 0.00
 1. `hsl_end_*` / `hsl_begin_*` — always shown
 2. `ia_bdry_*` — suppressed if tier 1 at same AR
 3. `citybegin|cityend` — suppressed if tier 1 or 2 at same AR
-4. `countybegin|countyend` — suppressed if tier 1, 2, or 3 at same AR
+
+County begin/end records are never suppressed here. The negative-OD/PM guard in `hsl_filterCityBoundaries` handles county begin records that precede the queried range start.
 
 ---
 
@@ -749,6 +753,10 @@ hsl_filterRealignmentLandmarks(filtered)
   Removes BEGIN/END REALIGNMENT landmarks whose pmKey matches any other record.
   Only keeps alignment='R' realignment landmarks (L duplicates are always dropped).
   Keeps realignment landmarks with blank/null pmMeasure (no pmKey to match against).
+  Suppresses BEGIN/END TEMPORARY CONNECTION/CONNECTOR landmarks when an IA boundary
+    record exists at the same AR (within 0.01); otherwise always shown.
+  IA boundary records: only suppressed when PM < 0 (precedes queried range). Never
+    suppressed by coincident H records — they are authoritative structural markers.
   ↓
 allPairs — final ordered list passed to hsl_renderPage()
 ```
