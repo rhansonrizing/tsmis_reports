@@ -603,11 +603,11 @@
       const { minM, maxM } = getMRange(f.geometry);
       if (minM == null || maxM == null) continue;
       if (!bySuffix.has(suffix)) {
-        bySuffix.set(suffix, { minM, maxM, minRouteId: a.RouteId, maxRouteId: a.RouteId, county: a.County ?? '' });
+        bySuffix.set(suffix, { minM, maxM, minRouteId: a.RouteId, maxRouteId: a.RouteId, minCounty: a.County ?? '', maxCounty: a.County ?? '' });
       } else {
         const e = bySuffix.get(suffix);
-        if (minM < e.minM) { e.minM = minM; e.minRouteId = a.RouteId; }
-        if (maxM > e.maxM) { e.maxM = maxM; e.maxRouteId = a.RouteId; }
+        if (minM < e.minM) { e.minM = minM; e.minRouteId = a.RouteId; e.minCounty = a.County ?? ''; }
+        if (maxM > e.maxM) { e.maxM = maxM; e.maxRouteId = a.RouteId; e.maxCounty = a.County ?? ''; }
       }
     }
     if (!bySuffix.size) return [];
@@ -615,8 +615,8 @@
     // One translate point per boundary: [L-begin, L-end, R-begin, R-end] (only present suffixes)
     const xlatePoints = [];
     for (const [suffix, e] of bySuffix) {
-      xlatePoints.push({ suffix, sectionIdx: 0, isBegin: true,  routeId: e.minRouteId, measure: e.minM, county: e.county });
-      xlatePoints.push({ suffix, sectionIdx: 0, isBegin: false, routeId: e.maxRouteId, measure: e.maxM, county: e.county });
+      xlatePoints.push({ suffix, sectionIdx: 0, isBegin: true,  routeId: e.minRouteId, measure: e.minM, county: e.minCounty });
+      xlatePoints.push({ suffix, sectionIdx: 0, isBegin: false, routeId: e.maxRouteId, measure: e.maxM, county: e.maxCounty });
     }
 
     const xlateUrl = `${CONFIG.mapServiceUrl}/exts/LRServer/networkLayers/3/translate`;
