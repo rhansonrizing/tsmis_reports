@@ -2437,8 +2437,27 @@
       if (eq.eq2.isRouteBreakEquation) continue;
       for (const eqRow of [eq.eq1, eq.eq2]) {
         if (eqRow.pmMeasure == null || eqRow.pmMeasure === '' || isNaN(parseFloat(eqRow.pmMeasure))) continue;
+        const eqLabel = `eq${eqRow.isSecondEq ? '2' : '1'} pfx:${normPfx(eqRow.pmPrefix)} pm:${parseFloat(eqRow.pmMeasure).toFixed(3)}`;
+        // All records at same PM regardless of type — for diagnostic visibility
+        const pmNeighbors = allPairs.filter(lm =>
+          lm !== eqRow && lm.type !== 'equation' &&
+          lm.pmMeasure != null && lm.pmMeasure !== '' && !isNaN(parseFloat(lm.pmMeasure)) &&
+          normPfx(lm.pmPrefix) === normPfx(eqRow.pmPrefix) &&
+          pmClose(lm.pmMeasure, eqRow.pmMeasure)
+        );
+        if (pmNeighbors.length > 0) {
+          const isEnrichable = t => t === 'landmark' || t === 'countyend' || t === 'countybegin';
+          console.group(`[eqEnrich] ${eqLabel}  ar:${parseFloat(eqRow.arMeasure).toFixed(3)}`);
+          for (const lm of pmNeighbors) {
+            const suppTag  = suppressed.has(lm.name) ? ' SUPPRESSED' : '';
+            const typePass = isEnrichable(lm.type) ? '' : ` TYPE-FAIL(${lm.type})`;
+            console.log(`  ${lm.type.padEnd(12)} pfx:${normPfx(lm.pmPrefix)} pm:${parseFloat(lm.pmMeasure).toFixed(3)} ar:${parseFloat(lm.arMeasure).toFixed(3)}  desc:"${lm.desc}"${suppTag}${typePass}`);
+          }
+          console.groupEnd();
+        }
         const matches = allPairs.filter(lm =>
-          lm.type === 'landmark' && !suppressed.has(lm.name) &&
+          (lm.type === 'landmark' || lm.type === 'countyend' || lm.type === 'countybegin') &&
+          !suppressed.has(lm.name) &&
           lm.pmMeasure != null && lm.pmMeasure !== '' && !isNaN(parseFloat(lm.pmMeasure)) &&
           normPfx(lm.pmPrefix) === normPfx(eqRow.pmPrefix) &&
           pmClose(lm.pmMeasure, eqRow.pmMeasure)
