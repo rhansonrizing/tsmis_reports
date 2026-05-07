@@ -2464,7 +2464,12 @@
         );
         if (matches.length === 0) continue;
         const allSameDesc = matches.every(lm => lm.desc === matches[0].desc);
-        if (matches.length === 1 || allSameDesc) {
+        // Layer 123 stores separate records per roadbed at IA endpoints, producing
+        // multiple same-PM matches with slightly different descriptions (e.g.
+        // "END INDEP ALIGN RT LNS" vs "END INDEP AIGN LT & RT"). Treat these as
+        // roadbed duplicates: pick closest by AR and suppress all.
+        const allIaRelated = matches.every(lm => /INDEP/i.test(lm.desc ?? ''));
+        if (matches.length === 1 || allSameDesc || allIaRelated) {
           let chosen = matches[0];
           if (matches.length > 1) {
             const eqAr = parseFloat(eqRow.arMeasure);
