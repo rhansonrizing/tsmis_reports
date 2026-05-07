@@ -867,6 +867,8 @@
       const [p1, p2] = [...byPm.values()].sort((a, b) => a.arMeasure - b.arMeasure);
 
       if (p2.arMeasure - p1.arMeasure > 1) continue;
+      // Same AR to 3dp but different county = routing artifact, not a real equation point.
+      if ((p2.arMeasure - p1.arMeasure) < 0.0005 && p1.county !== p2.county) continue;
 
       const iIsIndL = p1.pmSuffix === 'L';
       const jIsIndL = p2.pmSuffix === 'L';
@@ -939,6 +941,8 @@
         if (arDiff < 0.0005 && pmDiff < dupThreshold) {
           continue;
         }
+        // Same AR to 3dp but different county = routing artifact, not a real equation point.
+        if (arDiff < 0.0005 && points[i].county !== points[j].county) continue;
         const [p1, p2] = [points[i], points[j]];
         used.add(i);
         used.add(j);
