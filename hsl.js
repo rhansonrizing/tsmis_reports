@@ -693,9 +693,7 @@
         const pmKey = parseFloat(pt.pmMeasure).toFixed(3);
         if (!byPm.has(pmKey)) byPm.set(pmKey, pt);
       }
-      if (byPm.size !== 2) {
-        continue;
-      }
+      if (byPm.size !== 2) continue;
 
       // Sort by AR ascending: lower AR = eq1, higher AR = eq2.
       const [p1, p2] = [...byPm.values()].sort((a, b) => a.arMeasure - b.arMeasure);
@@ -761,6 +759,22 @@
     const used = new Set();
     for (let i = 0; i < points.length; i++) {
       if (odPaired.has(points[i]) || used.has(i)) continue;
+      // Pre-scan: collect prefix systems already represented at this PM location by a "twin"
+      // (a different-prefix point with the same PM to 3dp, within 0.005 AR). Pairing i with a
+      // point whose prefix matches a twin's would create a spurious equation between a residual
+      // calibration mark from an already-handled PM transition and a live point.
+      const twinPrefixes = new Set();
+      const iPm3 = parseFloat(points[i].pmMeasure).toFixed(3);
+      for (let k = i - 1; k >= 0 && (points[i].arMeasure - points[k].arMeasure) <= 0.005; k--) {
+        if (!odPaired.has(points[k]) && !used.has(k) && points[k].pmPrefix !== points[i].pmPrefix &&
+            parseFloat(points[k].pmMeasure).toFixed(3) === iPm3)
+          twinPrefixes.add(points[k].pmPrefix);
+      }
+      for (let k = i + 1; k < points.length && (points[k].arMeasure - points[i].arMeasure) <= 0.005; k++) {
+        if (!odPaired.has(points[k]) && !used.has(k) && points[k].pmPrefix !== points[i].pmPrefix &&
+            parseFloat(points[k].pmMeasure).toFixed(3) === iPm3)
+          twinPrefixes.add(points[k].pmPrefix);
+      }
       for (let j = i + 1; j < points.length; j++) {
         if (odPaired.has(points[j]) || used.has(j)) continue;
         const arDiff = Math.abs(points[j].arMeasure - points[i].arMeasure);
@@ -770,6 +784,12 @@
         const jIsIndL = points[j].pmSuffix === 'L';
         if (iIsIndL !== jIsIndL) continue;
         if (parseFloat(points[i].pmMeasure).toFixed(3) === parseFloat(points[j].pmMeasure).toFixed(3)) continue;
+        // A real equation point always transitions between PM systems (different prefix or county).
+        // Two points sharing the same prefix and county are consecutive marks in one system.
+        if (points[i].pmPrefix === points[j].pmPrefix && points[i].county === points[j].county) continue;
+        // Skip if j's prefix is already represented at i's location by a twin — j is a residual
+        // calibration mark from a PM system that was already handled at this point's location.
+        if (twinPrefixes.has(points[j].pmPrefix)) continue;
         // Dup check: skip RouteId variants of the same calibration point. True variants
         // have the same PM (pmDiff ≈ 0); a pmDiff of 0.01+ is a genuine equation pair.
         const dupThreshold = (iIsIndL && jIsIndL) ? 0.01 : 0.001;
@@ -2612,7 +2632,7 @@
     const length  = lengths[idx];
     const isEq1   = p.type === 'equation' && !p.isSecondEq;
     const isRealignment = p.type === 'landmark' && /^(BEGIN|END)( [HMNR])? REALIGNMENT$/.test(p.desc);
-    const isTemporary   = p.type === 'landmark' && (p.desc === 'BEGIN TEMPORARY CONNECTION' || p.desc === 'END TEMPORARY CONNECTION');
+    const isTemporary   = p.type === 'landmark' && /^(BEGIN|END) TEMPORARY (CONNECTION|CONNECTOR)/i.test(p.desc ?? '');
     const isIndepAlign  = p.type === 'landmark' && /INDEP ALIGN/i.test(p.desc ?? '');
     const realignDescHtml = (() => {
       if (!isRealignment) return null;
@@ -2673,7 +2693,7 @@
       : p.hasCrossRoute ? '*P*'
       : p.featureType !== 'R' && p.featureType !== 'I' && length !== '' ? padMeasure(length) : '';
     const isRealignment = p.type === 'landmark' && /^(BEGIN|END)( [HMNR])? REALIGNMENT$/.test(p.desc);
-    const isTemporary   = p.type === 'landmark' && (p.desc === 'BEGIN TEMPORARY CONNECTION' || p.desc === 'END TEMPORARY CONNECTION');
+    const isTemporary   = p.type === 'landmark' && /^(BEGIN|END) TEMPORARY (CONNECTION|CONNECTOR)/i.test(p.desc ?? '');
     const isIndepAlign  = p.type === 'landmark' && /INDEP ALIGN/i.test(p.desc ?? '');
     const realignDescHtml = (() => {
       if (!isRealignment) return null;

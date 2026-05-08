@@ -127,7 +127,7 @@ If the realignment record has no valid PM measure it passes all three checks and
 
 `BEGIN TEMPORARY CONNECTION`, `END TEMPORARY CONNECTION`, `BEGIN TEMPORARY CONNECTOR`, and `END TEMPORARY CONNECTOR` landmarks are suppressed when a natural `INDEP ALIGN` landmark from layer 123 exists at the **same AR** (within **0.01**). This avoids redundant rows when both records appear at the same location — the independent alignment description conveys the structural transition more precisely.
 
-If no coincident INDEP ALIGN landmark exists, the TEMPORARY CONNECTION/CONNECTOR landmark is always shown.
+If no coincident INDEP ALIGN landmark exists, the TEMPORARY CONNECTION/CONNECTOR landmark is always shown in **green** (`hsl-item-cb` row class).
 
 ---
 
@@ -177,6 +177,8 @@ Points paired in Pass 1 are excluded from Pass 2.
 - PMs are equal to 3dp (duplicate RouteId variants of the same calibration point)
 - AR < 0.0005 AND PM difference < threshold (0.01 for L-suffix pairs, 0.001 otherwise) — near-identical duplicates
 - PM pair key already used (prevents double-pairing)
+- Same PM prefix AND same county — consecutive calibration marks within one PM system, never an equation boundary
+- j's prefix matches a **twin prefix** — a different-prefix point at i's location with the same PM to 3dp (within 0.005 AR). The twin already represents that prefix system at this point; pairing i with another point of the same prefix would create a spurious equation from residual calibration data left in the layer after a prefix transition handled elsewhere
 
 OD matching is **not** required — at genuine equation points the OD network has a discontinuity, so both sides intentionally produce different OD values.
 
