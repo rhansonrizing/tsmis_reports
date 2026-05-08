@@ -267,11 +267,17 @@ Phase 5: Synthetic suppression + route break enrichment
     → pairs Route Break + Route Resume via routeBreakId; handles equation-pair display
     → route-break landmark enrichment: if exactly one landmark shares prefix+measure with a route break/resume,
       appends landmark desc to the route break/resume; suppresses the standalone landmark row
-    → equation landmark enrichment: if one or more landmarks share prefix+measure with eq1 or eq2,
-      stores lmDesc on the eq record and suppresses all matching landmark rows; eq1 renders
-      "<strong>EQUATES TO</strong> lmDesc", eq2 shows lmDesc in the description column.
-      When multiple matches share the same description (P/S route duplicates from layer 123),
-      the closest by AR is used and all are suppressed. If descriptions differ, enrichment is skipped.
+    → equation landmark enrichment (two-pass):
+      Primary: non-INDEP landmarks at same PM prefix+measure; if one match (or all same desc),
+        stores lmDesc on the eq record and suppresses matched rows; eq1 renders
+        "<strong>EQUATES TO</strong> lmDesc", eq2 shows lmDesc in description column.
+      Fallback (when primary finds no unambiguous match and eqRow.alignment is 'R' or 'L'):
+        Searches INDEP ALIGN landmarks at the same PM using description direction keywords —
+        R eq pair absorbs landmarks with no 'LT' in desc (RT-only or generic);
+        L eq pair absorbs landmarks with 'LT' in desc or generic (no 'RT' either).
+        Note: layer 123 Alignment field is unreliable for bilateral records (e.g. "END INDEP ALIGN
+        LT & RT" is stored as alignment='R'); description keywords are the correct discriminator.
+        Matched INDEP ALIGN landmark sets lmDescGreen=true (renders green).
     → consecutive ordering: ensures ROUTE BREAK and ROUTE RESUME are on adjacent lines
       (moves records sorted between them to just after the ROUTE RESUME)
 
@@ -357,7 +363,8 @@ All pair objects share these base fields:
   eqPairId,          // shared key: "eqnet_routeNum_odKey"
   isSecondEq,        // false = source measure row; true = "EQUATES TO" row
   lmDesc,            // absorbed landmark desc (set by hsl_applyRouteBreakEquations), or null
-  lmDescGreen,       // true when absorbed landmark is a green-type record (county boundary, realignment, temporary connection, or hsl terminal)
+  lmDescGreen,       // true when absorbed landmark is a green-type record (county boundary, realignment, temporary connection, hsl terminal, or INDEP ALIGN)
+  alignment,         // 'R', 'L', or '.' — from calibration point RouteId[9]; both eq1 and eq2 inherit p1's alignment
   pmSuffix,          // '.' or 'L' (for IA-alignment equations); eq2 uses 'E' as marker
   // After hsl_queryRampDescriptions:
   featureType        // 'H'
@@ -452,7 +459,7 @@ Produces an array parallel to `results`. Each entry is `(nextOD - curOD).toFixed
 Screen vs. print row renderers. Key display rules:
 - **eq1 rows**: span columns 6–9 with "EQUATES TO" text (or `<strong>EQUATES TO</strong> lmDesc` if a landmark was absorbed); no length or desc cell.
 - **eq2 desc**: shows `p.lmDesc` (absorbed landmark) if present, otherwise `p.desc` (empty by default).
-- **HG column**: `pmSuffix=L` → shows `L` (including eq2 records on the L alignment); otherwise shows `hwyGroup`. Single-side RT-only INDEP ALIGN landmarks have `hwyGroup` forced to `'R'`, and LT-only to `'L'`, in `hsl_queryRampDescriptions` — but only if the nearest preceding record with that pmSuffix shares the same pmPrefix (PMPrefix guard).
+- **HG column**: `pmSuffix=L` → shows `L` (including eq2 records on the L alignment); otherwise shows `hwyGroup`. Single-side RT-only INDEP ALIGN landmarks have `hwyGroup` forced to `'R'`, and LT-only to `'L'`, in `hsl_queryRampDescriptions` — but only if the nearest preceding record with that pmSuffix shares the same pmPrefix (PMPrefix guard). L-alignment equation points (`alignment='L'`) receive a special HG override in `hsl_queryRampDescriptions`: if the layer 116 lookup returns `'R'` (because the `_S` AR route's R-prefix section boundary hasn't ended yet), it is corrected — to `'D'` for mixed-pair eq2 (`isSecondEq && pmSuffix !== 'L'`, arriving at the standard divided alignment) or to `'L'` for all other L-alignment eq points (on the L roadbed).
 - **Length column**: `crossRouteFormatted` → `------->` ; `hasCrossRoute` → `*P*` ; else distance if H-type.
 - **Row colors**: `hsl-item-eq` (equation), `hsl-item-rb` (route breaks), `hsl-item-cb` (city/county/hsl_end/begin/realignment/INDEP ALIGN boundary), `hsl-item-ia-r` (R alignment), `hsl-item-ia-l` (L alignment).
 - **AR/OD columns** (screen renderer only): values within ±0.0005 of zero are clamped to `0.000` to prevent `-0.000` rendering from network calibration offsets.
@@ -460,8 +467,8 @@ Screen vs. print row renderers. Key display rules:
 - **Route break/resume desc**: `ROUTE BREAK` or `ROUTE RESUME` prefix wrapped in `<strong>`; remainder (landmark enrichment if present) in normal weight.
 - **REALIGNMENT desc**: PMPrefix letter bolded via `realignDescHtml` (regex `^(BEGIN|END) ([HMNR]) REALIGNMENT$`) — e.g. "BEGIN **R** REALIGNMENT".
 - **INDEP ALIGN desc**: direction indicator bolded via `indepAlignDescHtml` (word-boundary regex `\b(RT|LT|R|L)\b`) — e.g. "END INDEP ALIGN **RT** LNS".
-- **eq1 + lmDescGreen**: "EQUATES TO" in bold red (`#c00`); lmDesc in green (`#166534`). If lmDesc is a REALIGNMENT, its PMPrefix letter is also bolded inside the green span via `fmtLmDesc`.
-- **eq2 + lmDescGreen**: lmDesc shown in green (`#166534`) with REALIGNMENT PMPrefix bolded via `fmtLmDesc`. Non-REALIGNMENT lmDesc renders plain (esc only).
+- **eq1 + lmDescGreen**: "EQUATES TO" in bold red (`#c00`); lmDesc in green (`#166534`). If lmDesc is a REALIGNMENT, its PMPrefix letter is also bolded inside the green span via `fmtLmDesc`. INDEP ALIGN landmarks absorbed via the alignment fallback also set `lmDescGreen=true`.
+- **eq2 + lmDescGreen**: lmDesc shown in green (`#166534`) with REALIGNMENT PMPrefix bolded via `fmtLmDesc`. INDEP ALIGN lmDesc renders with `indepAlignDescHtml` (direction indicator bolded). Non-REALIGNMENT/non-INDEP lmDesc renders plain (esc only).
 
 ### hsl_printAll
 - Renders cover page + legend page + paginated `<table>` sections (one per `_hslPageStarts` entry).
@@ -509,8 +516,8 @@ County begin/end records are never suppressed here. The negative-OD/PM guard in 
 
 ### queryEquationPointsFromNetwork (layer 1)
 Two-pass pairing strategy:
-1. **Pass 1 (OD-based):** Group calibration points by OD measure (3dp). Groups of exactly 2 distinct PMs = one equation pair. Lower AR = eq1, higher AR = eq2.
-2. **Pass 2 (AR fallback):** For unpaired points, pair by AR proximity (≤ 0.005). Guards: same indL/indR classification; not duplicate (same PM to 3dp); AR < 0.0005 AND pmDiff < threshold (dup-variant guard). OD matching is **not** required — at genuine equation points the OD network has a discontinuity, so both sides intentionally produce different OD values.
+1. **Pass 1 (OD-based):** Group calibration points by OD measure (3dp). Groups of exactly 2 distinct PMs = one equation pair. Lower AR = eq1, higher AR = eq2. Mixed `pmSuffix` (one `L`, one `.`) is allowed in Pass 1 — OD equality is sufficient confirmation for genuine equation points at an independent-alignment boundary.
+2. **Pass 2 (AR fallback):** For unpaired points, pair by AR proximity (≤ 0.005). Guards: same `pmSuffix='L'` classification (mixed-suffix pairs not allowed here); not duplicate (same PM to 3dp); AR < 0.0005 AND pmDiff < threshold (dup-variant guard). OD matching is **not** required — at genuine equation points the OD network has a discontinuity, so both sides intentionally produce different OD values.
 
 When county is specified, queried using `RouteId LIKE '${county}${route}%'`. When county=All, layer 85 is queried first to discover all counties on the route's AR segments; OR'd LIKE clauses cover all discovered counties. Returns `[]` only if the layer 85 query finds no counties.
 
@@ -576,15 +583,15 @@ const results = (await Promise.all(chunks.map(async chunk => {
 
 Equation points are detected on the fly from calibration point data (layer 1):
 
-1. **Query layer 1** for `NetworkId = 2` calibration points scoped to the route and county using a PM RouteId prefix (e.g. `HUM254`). Only right-alignment records (`RouteId.endsWith('R')`) are kept — left-alignment points translate to the same AR values and would create false self-pairs.
+1. **Query layer 1** for `NetworkId = 2` calibration points scoped to the route and county using a PM RouteId prefix (e.g. `HUM254`). All calibration points for the route are included regardless of alignment — the pairing guards prevent false self-pairs.
 
-2. **Translate** all calibration points from the PM network (layer 3 translate endpoint) to AllRoads AR (layer 4) and OD (layer 5) in a single parallel call.
+2. **Translate** all calibration points from the PM network (layer 3 translate endpoint) to AllRoads AR (layer 4) and OD (layer 5) in a single parallel call. The AR route selection prefers `_P` for `pmSuffix='.'` points (arriving on the main alignment) and `_S` for `pmSuffix='L'` points (on the L roadbed) — this ensures layer 116 HG lookups return the correct highway group.
 
 3. **Filter** translated points to the segment AR range, then sort by AR.
 
-4. **Pair** adjacent points within 0.005 AR of each other. Since the array is sorted by AR, `points[i]` (lower AR) is always eq1 and `points[j]` (higher AR) is always eq2. Each point is used in at most one pair.
+4. **Pair** calibration points using two passes (OD-based then AR fallback — see `queryEquationPointsFromNetwork` sub-query details above). Each point is used in at most one pair.
 
-5. **Build pair objects** in the same `eq1`/`eq2` structure as all other equation points — `isSecondEq: false` on eq1 (desc: `'PM EQUATION'`), `isSecondEq: true` and `pmSuffix: 'E'` on eq2 — so all existing sort tiebreak and render logic works unchanged.
+5. **Build pair objects** — `isSecondEq: false` on eq1 (desc: `'PM EQUATION'`), `isSecondEq: true` and `pmSuffix: 'E'` on eq2. Both inherit `alignment` from `p1.alignment` (RouteId[9] of the lower-AR calibration point).
 
 **County=All:** When county is null (All mode), layer 85 is queried to discover all counties on the route's AR segments. OR'd `RouteId LIKE` clauses are built for all discovered counties. Returns `[]` only if the layer 85 query finds no counties.
 

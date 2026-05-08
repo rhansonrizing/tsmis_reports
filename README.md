@@ -200,6 +200,12 @@ If one or more landmarks share the same PM prefix + measure (within 0.001) as eq
 
 When multiple matching landmarks all share the **same description** (e.g. duplicates from P- and S-route storage in layer 123), the one closest by AR to the equation row is used and all are suppressed. If the descriptions differ, enrichment is skipped (ambiguous case).
 
+**INDEP ALIGN fallback:** When the primary check finds no unambiguous match and the equation pair has a known alignment ('R' or 'L'), a second pass searches INDEP ALIGN landmarks at the same PM using description direction keywords as the discriminator:
+- R eq pair → absorbs landmarks with no `LT` in the description (RT-only or generic)
+- L eq pair → absorbs landmarks with `LT` in the description, or generic (no `RT` either)
+
+This handles locations where two INDEP ALIGN landmarks share the same PM but differ in description (e.g. "END INDEP ALGN,RT; PM R" and "END INDEP ALIGN LT & RT"). The layer 123 `Alignment` field is not used because bilateral records are often stored with `alignment='R'` regardless. Absorbed INDEP ALIGN landmarks render in green.
+
 This is independent of the route-break landmark enrichment. Equation pairs already handled by the route-break equation logic are excluded from this pass.
 
 ---

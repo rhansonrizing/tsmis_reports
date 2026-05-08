@@ -616,12 +616,27 @@
     const points = [];
     features.forEach((f, idx) => {
       const a = f.attributes;
+      // Extract PM metadata first — alignment is needed to select the correct AR route.
+      const rid       = a.RouteId;
+      const pmPrefix  = rid.length > 7 ? rid[7] : '.';
+      const pmSuffix  = rid.length > 8 ? rid[8] : '.';
+      const alignment = rid.length > 9 ? rid[9] : '.';
+
       const arXlated = (arData.locations ?? [])[idx]?.translatedLocations ?? [];
-      const arResult = arXlated.find(r => r.measure != null && r.routeId?.startsWith('SHS_') && r.routeId?.includes(routeNumDigits) && !r.routeId?.endsWith('_S'))
-                    ?? arXlated.find(r => r.measure != null && r.routeId?.startsWith('SHS_') && r.routeId?.includes(routeNumDigits))
-                    ?? arXlated.find(r => r.measure != null && r.routeId?.includes(routeNumDigits) && !r.routeId?.endsWith('_S'))
-                    ?? arXlated.find(r => r.measure != null && r.routeId?.includes(routeNumDigits))
-                    ?? arXlated.find(r => r.measure != null);
+      // L-suffix calibration points (pmSuffix='L') resolve to the _S AR route so that
+      // layer 116 lookups return the correct HG for the L independent alignment.
+      // Standard-alignment points (pmSuffix='.') use _P even when alignment='L',
+      // because they are arriving onto the main divided alignment (HG='D'), not the L roadbed.
+      const arResult = pmSuffix === 'L'
+        ? (arXlated.find(r => r.measure != null && r.routeId?.startsWith('SHS_') && r.routeId?.includes(routeNumDigits) && r.routeId?.endsWith('_S'))
+           ?? arXlated.find(r => r.measure != null && r.routeId?.startsWith('SHS_') && r.routeId?.includes(routeNumDigits))
+           ?? arXlated.find(r => r.measure != null && r.routeId?.includes(routeNumDigits))
+           ?? arXlated.find(r => r.measure != null))
+        : (arXlated.find(r => r.measure != null && r.routeId?.startsWith('SHS_') && r.routeId?.includes(routeNumDigits) && !r.routeId?.endsWith('_S'))
+           ?? arXlated.find(r => r.measure != null && r.routeId?.startsWith('SHS_') && r.routeId?.includes(routeNumDigits))
+           ?? arXlated.find(r => r.measure != null && r.routeId?.includes(routeNumDigits) && !r.routeId?.endsWith('_S'))
+           ?? arXlated.find(r => r.measure != null && r.routeId?.includes(routeNumDigits))
+           ?? arXlated.find(r => r.measure != null));
       const arMeasure = arResult?.measure ?? null;
       if (arMeasure == null || arMeasure < segArMin || arMeasure > segArMax) return;
       const arRouteNum = arResult.routeId?.match(/^SHS_(\d+)/)?.[1];
@@ -631,12 +646,6 @@
       const odResult = odXlated.find(r => r.measure != null && r.routeId?.includes(routeNumDigits))
                     ?? odXlated.find(r => r.measure != null);
       const odMeasure = odResult?.measure != null ? String(odResult.measure) : '';
-
-      // Extract PM metadata from RouteId: county(0-2), pmPrefix(7), pmSuffix(8), alignment(9)
-      const rid       = a.RouteId;
-      const pmPrefix  = rid.length > 7 ? rid[7] : '.';
-      const pmSuffix  = rid.length > 8 ? rid[8] : '.';
-      const alignment = rid.length > 9 ? rid[9] : '.';
 
       points.push({
         routeId:   rid,
@@ -697,9 +706,8 @@
 
       const iIsIndL = p1.pmSuffix === 'L';
       const jIsIndL = p2.pmSuffix === 'L';
-      if (iIsIndL !== jIsIndL) {
-        continue;
-      }
+      // Mixed pmSuffix (one L, one dot) is allowed in Pass 1 — OD equality is
+      // sufficient confirmation that these are genuine equation points by definition.
 
       const pm1fmt    = parseFloat(String(p1.pmMeasure)).toFixed(3);
       const pm2fmt    = parseFloat(String(p2.pmMeasure)).toFixed(3);
@@ -726,6 +734,7 @@
         pmMeasure:  String(p1.pmMeasure),
         odMeasure:  p1.odMeasure,
         district:   '',
+        alignment:  p1.alignment,
         isSecondEq: false
       });
       pairs.push({
@@ -741,6 +750,7 @@
         pmMeasure:  String(p2.pmMeasure),
         odMeasure:  p2.odMeasure,
         district:   '',
+        alignment:  p1.alignment,
         isSecondEq: true
       });
     }
@@ -795,6 +805,7 @@
           pmMeasure:  String(p1.pmMeasure),
           odMeasure:  p1.odMeasure,
           district:   '',
+          alignment:  p1.alignment,
           isSecondEq: false
         });
         pairs.push({
@@ -810,6 +821,7 @@
           pmMeasure:  String(p2.pmMeasure),
           odMeasure:  p2.odMeasure,
           district:   '',
+          alignment:  p1.alignment,
           isSecondEq: true
         });
         break; // each point pairs with at most one other
@@ -2280,9 +2292,8 @@
           normPfx(lm.pmPrefix) === normPfx(eqRow.pmPrefix) &&
           pmClose(lm.pmMeasure, eqRow.pmMeasure)
         );
-        if (matches.length === 0) continue;
-        const allSameDesc = matches.every(lm => lm.desc === matches[0].desc);
-        if (matches.length === 1 || allSameDesc) {
+        const allSameDesc = matches.length > 0 && matches.every(lm => lm.desc === matches[0].desc);
+        if (matches.length > 0 && (matches.length === 1 || allSameDesc)) {
           let chosen = matches[0];
           if (matches.length > 1) {
             const eqAr = parseFloat(eqRow.arMeasure);
@@ -2300,6 +2311,41 @@
               chosen.name?.startsWith('hsl_end_') || chosen.name?.startsWith('hsl_begin_')
             ));
           for (const lm of matches) suppressed.add(lm.name);
+        } else if (eqRow.alignment && eqRow.alignment !== '.') {
+          // No unambiguous non-INDEP match. Try INDEP ALIGN landmarks at the same PM.
+          // The layer 123 Alignment field is unreliable for bilateral records (e.g.
+          // "END INDEP ALIGN LT & RT" is stored as alignment='R'). Use description
+          // direction keywords instead:
+          //   R eq pair → no 'LT' in desc (RT-only or generic)
+          //   L eq pair → has 'LT' in desc, or is generic (no 'RT' either)
+          const eqIsR = eqRow.alignment === 'R';
+          const indepMatches = allPairs.filter(lm => {
+            if (lm.type !== 'landmark' || suppressed.has(lm.name)) return false;
+            if (!/INDEP/i.test(lm.desc ?? '')) return false;
+            if (lm.pmMeasure == null || lm.pmMeasure === '' || isNaN(parseFloat(lm.pmMeasure))) return false;
+            if (normPfx(lm.pmPrefix) !== normPfx(eqRow.pmPrefix)) return false;
+            if (!pmClose(lm.pmMeasure, eqRow.pmMeasure)) return false;
+            const hasLT = /\bLT\b/i.test(lm.desc);
+            const hasRT = /\bRT\b/i.test(lm.desc);
+            return eqIsR ? !hasLT : (hasLT || !hasRT);
+          });
+          if (indepMatches.length > 0) {
+            const allSameDescIndep = indepMatches.every(lm => lm.desc === indepMatches[0].desc);
+            if (indepMatches.length === 1 || allSameDescIndep) {
+              let chosen = indepMatches[0];
+              if (indepMatches.length > 1) {
+                const eqAr = parseFloat(eqRow.arMeasure);
+                if (!isNaN(eqAr)) {
+                  chosen = indepMatches.reduce((best, lm) =>
+                    Math.abs(parseFloat(lm.arMeasure) - eqAr) < Math.abs(parseFloat(best.arMeasure) - eqAr) ? lm : best
+                  );
+                }
+              }
+              eqRow.lmDesc = chosen.desc;
+              eqRow.lmDescGreen = true; // INDEP ALIGN landmarks render green
+              suppressed.add(chosen.name);
+            }
+          }
         }
       }
     }
@@ -2399,6 +2445,12 @@
     const odMap = translateToOD(allPairs);
     const results = allPairs.map((p, i) => {
       let hwyGroup = hwyMap.get(p.name) ?? (p.hgValue ?? '');
+      // L-alignment eq points: layer 116 on _S may return 'R' at ARs where _S still
+      // tracks the R roadbed. Two cases:
+      //   Mixed-pair eq2 (pmSuffix='E'): arriving at standard divided alignment →'D'
+      //   All other L-alignment eq points (pmSuffix='L'): L roadbed, never HG='R' → 'L'
+      if (p.type === 'equation' && p.alignment === 'L' && hwyGroup === 'R')
+        hwyGroup = (p.isSecondEq && p.pmSuffix !== 'L') ? 'D' : 'L';
       if (p.type === 'landmark' && p.desc && /INDEP/i.test(p.desc)) {
         // Abbreviated layer 123 variants (e.g. "END INDEP ALIGN - RT", "END INDEP ALIGN RT LNS"):
         // layer 116 may return D once the R ind alignment ends, so derive from desc.
