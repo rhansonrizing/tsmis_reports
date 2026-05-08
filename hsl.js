@@ -57,10 +57,20 @@
       .filter(p => p.type === 'landmark' && p.arMeasure != null && !isNaN(p.arMeasure) &&
                    /INDEP/i.test(p.desc ?? ''))
       .map(p => p.arMeasure);
+    // desc+pmKey combos where an R-alignment TEMPORARY CONNECTION/CONNECTOR exists.
+    // Used to drop non-R duplicates at the same PM (BEGIN and END tracked separately).
+    const tmpConnRKeys = new Set(
+      pairs.filter(p => isTemporaryConn(p) && p.alignment === 'R' &&
+                        p.pmMeasure !== '' && p.pmMeasure != null && !isNaN(parseFloat(p.pmMeasure)))
+           .map(p => `${p.desc}|${pmKey(p)}`)
+    );
     return pairs.filter(p => {
       if (isTemporaryConn(p)) {
         if (p.arMeasure != null && !isNaN(p.arMeasure) &&
             iaBoundaryArSet.some(ar => Math.abs(ar - p.arMeasure) < 0.01)) return false;
+        if (p.alignment !== 'R' &&
+            p.pmMeasure !== '' && p.pmMeasure != null && !isNaN(parseFloat(p.pmMeasure)) &&
+            tmpConnRKeys.has(`${p.desc}|${pmKey(p)}`)) return false;
         return true;
       }
       if (!isRealignment(p)) return true;
@@ -73,14 +83,10 @@
       }
       if (p.desc.startsWith('END ') &&
           beginArMeasures.some(ar => Math.abs(ar - p.arMeasure) < 0.001)) {
-        const matchAr = beginArMeasures.find(ar => Math.abs(ar - p.arMeasure) < 0.001);
-        console.log(`[filterRealign] DROPPED “${p.desc}” county:${p.county} pfx:${normPfx(p)} pm:${parseFloat(p.pmMeasure).toFixed(3)} ar:${parseFloat(p.arMeasure).toFixed(3)}  → BEGIN-at-same-AR:${parseFloat(matchAr).toFixed(3)}`);
         return false;
       }
       if (p.pmMeasure === '' || p.pmMeasure == null || isNaN(parseFloat(p.pmMeasure))) return true;
       if (naturalPmKeys.has(key)) {
-        const culprit = pairs.find(q => isNaturalH(q) && pmKey(q) === key);
-        console.log(`[filterRealign] DROPPED “${p.desc}” county:${p.county} pfx:${normPfx(p)} pm:${parseFloat(p.pmMeasure).toFixed(3)} ar:${parseFloat(p.arMeasure).toFixed(3)}  → naturalH type:${culprit?.type} desc:”${culprit?.desc}” ar:${culprit?.arMeasure != null ? parseFloat(culprit.arMeasure).toFixed(3) : '?'}`);
         return false;
       }
       return true;
@@ -2266,16 +2272,6 @@
           normPfx(lm.pmPrefix) === normPfx(eqRow.pmPrefix) &&
           pmClose(lm.pmMeasure, eqRow.pmMeasure)
         );
-        if (pmNeighbors.length > 0) {
-          const isEnrichable = t => t === 'landmark' || t === 'countyend' || t === 'countybegin';
-          console.group(`[eqEnrich] ${eqLabel}  ar:${parseFloat(eqRow.arMeasure).toFixed(3)}`);
-          for (const lm of pmNeighbors) {
-            const suppTag  = suppressed.has(lm.name) ? ' SUPPRESSED' : '';
-            const typePass = isEnrichable(lm.type) ? '' : ` TYPE-FAIL(${lm.type})`;
-            console.log(`  ${lm.type.padEnd(12)} pfx:${normPfx(lm.pmPrefix)} pm:${parseFloat(lm.pmMeasure).toFixed(3)} ar:${parseFloat(lm.arMeasure).toFixed(3)}  desc:"${lm.desc}"${suppTag}${typePass}`);
-          }
-          console.groupEnd();
-        }
         const matches = allPairs.filter(lm =>
           (lm.type === 'landmark' || lm.type === 'countyend' || lm.type === 'countybegin') &&
           !suppressed.has(lm.name) &&
@@ -2410,16 +2406,18 @@
         // same pmPrefix — guards against cross-section misclassification.
         const hasRT = /\bRT\b/i.test(p.desc);
         const hasLT = /\bLT\b/i.test(p.desc);
-        const normPfx = v => (v === '.' ? '' : (v ?? ''));
+        const normPfxHg = v => (v === '.' ? '' : (v ?? ''));
         const prev = allPairs.slice(0, i).reverse();
-        if (hasRT && !hasLT) {
-          const prevR = prev.find(r => r.pmSuffix === 'R');
-          if (prevR && normPfx(prevR.pmPrefix) === normPfx(p.pmPrefix)) hwyGroup = 'R';
-        } else if (hasLT && !hasRT) {
-          const prevL = prev.find(r => r.pmSuffix === 'L');
-          if (prevL && normPfx(prevL.pmPrefix) === normPfx(p.pmPrefix)) hwyGroup = 'L';
+        const isEndRec = /^END\b/i.test(p.desc.trim());
+        if (!isEndRec && hasRT && !hasLT) {
+          const prevR = prev.find(r => r.pmSuffix === 'R' && r.type !== 'equation');
+          const pfxMatch = prevR != null && normPfxHg(prevR.pmPrefix) === normPfxHg(p.pmPrefix);
+          if (pfxMatch) hwyGroup = 'R';
+        } else if (!isEndRec && hasLT && !hasRT) {
+          const prevL = prev.find(r => r.pmSuffix === 'L' && r.type !== 'equation');
+          const pfxMatch = prevL != null && normPfxHg(prevL.pmPrefix) === normPfxHg(p.pmPrefix);
+          if (pfxMatch) hwyGroup = 'L';
         }
-        // Both RT & LT (e.g. "END INDEP ALIGN LT & RT") or neither: keep layer 116 value.
       }
       if (p.type === 'countybegin' || p.type === 'countyend') {
         if (p.pmSuffix === 'R') hwyGroup = 'R';
