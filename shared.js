@@ -794,6 +794,28 @@ async function loadCountyCodeDomain() {
     // appear before their section trigger in sort order. Deferred here and flushed
     // into the next section's allSec so they land in rGroup/lGroup.
     const deferredIABounds = [];
+
+    // Single-side INDEP ALIGN records (RT-only or LT-only) where the nearest
+    // preceding record with the matching pmSuffix has a different pmPrefix.
+    // These should not be absorbed into a section group — they belong with neutral
+    // IA boundaries after the section rather than in rGroup/lGroup.
+    const normPfxSort = v => (v === '.' ? '' : (v ?? ''));
+    const indepNoPmPfxMatch = new Set();
+    for (let k = 0; k < main.length; k++) {
+      const p = main[k];
+      if (!isIABoundaryRec(p)) continue;
+      const hasRT = /\bRT\b/i.test(p.desc);
+      const hasLT = /\bLT\b/i.test(p.desc);
+      let targetSuffix = null;
+      if (hasRT && !hasLT) targetSuffix = 'R';
+      else if (hasLT && !hasRT) targetSuffix = 'L';
+      if (!targetSuffix) continue;
+      const prevMatch = main.slice(0, k).reverse().find(r => r.pmSuffix === targetSuffix);
+      if (!prevMatch || normPfxSort(prevMatch.pmPrefix) !== normPfxSort(p.pmPrefix)) {
+        indepNoPmPfxMatch.add(p);
+      }
+    }
+
     const grouped = [];
     let i = 0;
     while (i < main.length) {
@@ -846,6 +868,10 @@ async function loadCountyCodeDomain() {
                 const pk = main[peekK];
                 if (pk.type === 'equation') { peekK++; continue; }
                 if (isIABoundaryRec(pk)) {
+                  // Single-side INDEP ALIGN records that fail the PMPrefix test are
+                  // not absorbed — they outer-push naturally after the eq pair,
+                  // alongside other neutral IA boundaries at the same AR.
+                  if (indepNoPmPfxMatch.has(pk)) { peekK++; continue; }
                   // Collect ALL IA boundary records (both dot-sfx and R/L-sfx) so
                   // they can be unconditionally absorbed into this section below.
                   peekedIABounds.push(pk);

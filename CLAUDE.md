@@ -62,7 +62,7 @@ For local dev: change `oauthRedirectUrl` to `http://localhost:5500/index.html`.
 | Layer | Name | Type | Key Fields | Purpose |
 |-------|------|------|-----------|---------|
 | 1 | Calibration Points | Point Events | RouteId, Measure, NetworkId | Equation point detection (NetworkId=2, right-alignment only); also used by `hsl_queryEndRecord` for PM endpoint lookup |
-| 3 | PM Calibration Routes | Route Geometry (M-aware) | RouteId, PMSuffix, County | PM-network geometry; translate source for PM→AR/OD; `queryIndependentAlignmentBoundaries` reads M-values for L/R alignment extents |
+| 3 | PM Calibration Routes | Route Geometry (M-aware) | RouteId, PMSuffix, County | PM-network geometry; translate source for PM→AR/OD |
 | 74 | City Code | Range Events | City_Code, FromARMeasure, ToARMeasure, BeginPMSuffix/EndPMSuffix | City code by AR range; queried in `queryCityBegins` for HSL and `queryRangeLayer` for all reports |
 | 85 | County Code | Range Events | County_Code, FromARMeasure, ToARMeasure, District | County ranges on route; used in `onDistrictChange` (dropdown population), `queryCountyBegins`, `hsl_queryEndRecord`, `hsl_queryBeginRecord`. **Note:** stores 2-char codes without trailing period (e.g. `SJ`, not `SJ.`) — use `countyCodeMatches()` to compare |
 | 114 | District Boundary Events | Range Events | District, RouteID, FromARMeasure, ToARMeasure | District extents per route; used by `hsl_queryEndRecord` / `hsl_queryBeginRecord` to find END/BEGIN OF DISTRICT AR measures |
@@ -229,7 +229,7 @@ Enter From/To postmiles → translateSection() PM→AR (4 parallel: R/L × from/
 Select District + County + Route
 → buildHslSegments() — P/S segments filtered by _allRouteIds
 
-Phase 1: 9 parallel queries
+Phase 1: 8 parallel queries
   queryAttributeSet(segments, district, county)         → rampPairs
   queryLandmarks(segments, routeSuffix, district, county) → landmarkPairs (layer 123; AR→OD translated)
   queryRouteBreaks(segments, routeSuffix, district, county) → routeBreakPairs (layer 133; AR→OD translated)
@@ -237,7 +237,6 @@ Phase 1: 9 parallel queries
   queryEquationPointsFromNetwork(segments, routeNum, d, c)  → equationPairs (layer 1→translate)
   queryCityBegins(segments, routeNum, district, county)     → cityBeginPairs (layer 74; AR→OD+PM translated)
   queryCountyBegins(segments, routeNum, district, county)   → countyBeginPairs (layer 85; AR→OD+PM translated)
-  queryIndependentAlignmentBoundaries(segments, routeNum, county) → iaBoundaryPairs (layer 3 geometry; begin/end translated)
   queryRouteDirection(routeNum)                              → direction (layer 304)
 
 Phase 2: HG pre-fetch
@@ -262,7 +261,7 @@ Phase 5: Synthetic suppression + route break enrichment
   cityPairsForLookup = allPairs.filter(p => p.type === 'citybegin' || p.type === 'cityend')
     → snapshot BEFORE hsl_applySyntheticHierarchy removes city records at route terminals
   hsl_applySyntheticHierarchy(allPairs)
-    → tier-based suppression: hsl_end/begin_* > ia_bdry_* > city*
+    → tier-based suppression: hsl_end/begin_* > city*
       (county begin/end are never suppressed here)
   hsl_applyRouteBreakEquations(allPairs)
     → pairs Route Break + Route Resume via routeBreakId; handles equation-pair display
@@ -357,6 +356,8 @@ All pair objects share these base fields:
   desc,              // 'PM EQUATION' (eq1) or '' (eq2)
   eqPairId,          // shared key: "eqnet_routeNum_odKey"
   isSecondEq,        // false = source measure row; true = "EQUATES TO" row
+  lmDesc,            // absorbed landmark desc (set by hsl_applyRouteBreakEquations), or null
+  lmDescGreen,       // true when absorbed landmark is a green-type record (county boundary, realignment, temporary connection, or hsl terminal)
   pmSuffix,          // '.' or 'L' (for IA-alignment equations); eq2 uses 'E' as marker
   // After hsl_queryRampDescriptions:
   featureType        // 'H'
@@ -402,7 +403,7 @@ All pair objects share these base fields:
 }
 ```
 
-### Synthetic Terminal / IA Boundary Objects
+### Synthetic Terminal Objects
 ```javascript
 // hsl_queryEndRecord / hsl_queryBeginRecord
 {
@@ -411,15 +412,6 @@ All pair objects share these base fields:
   desc: 'END OF ROUTE NNN' | 'END OF DISTRICT' | 'END OF COUNTY' | 'BEGIN ROUTE',
   hgValue: '',
 }
-
-// queryIndependentAlignmentBoundaries
-{
-  type: 'landmark',
-  name: 'ia_bdry_L|R_0_begin|end_pmMeasureX1000',
-  desc: 'BEGIN/END LEFT/RIGHT INDEPENDENT ALIGNMENT',
-  pmSuffix: 'L' | 'R',
-  alignment: 'L' | 'R',
-}
 ```
 
 ### Synthetic Record Name Prefixes (for `name.startsWith()` checks)
@@ -427,7 +419,6 @@ All pair objects share these base fields:
 |--------|--------|-----------|
 | `hsl_end_` | `hsl_queryEndRecord` | `hsl-item-cb` / `hsl-row-cb` |
 | `hsl_begin_` | `hsl_queryBeginRecord` | `hsl-item-cb` / `hsl-row-cb` |
-| `ia_bdry_` | `queryIndependentAlignmentBoundaries` | `hsl-item-cb` / `hsl-row-cb` |
 | `rb_` | `queryRouteBreaks` | `hsl-item-rb` / `hsl-row-rb` |
 | `cb_` / `ce_` | `queryCityBegins` (begin/end) | `hsl-item-cb` / `hsl-row-cb` |
 | `kb_` / `ke_` | `queryCountyBegins` (begin/end) | `hsl-item-cb` / `hsl-row-cb` |
@@ -461,12 +452,16 @@ Produces an array parallel to `results`. Each entry is `(nextOD - curOD).toFixed
 Screen vs. print row renderers. Key display rules:
 - **eq1 rows**: span columns 6–9 with "EQUATES TO" text (or `<strong>EQUATES TO</strong> lmDesc` if a landmark was absorbed); no length or desc cell.
 - **eq2 desc**: shows `p.lmDesc` (absorbed landmark) if present, otherwise `p.desc` (empty by default).
-- **HG column**: `pmSuffix=L` → shows `L` (including eq2 records on the L alignment); otherwise shows `hwyGroup`.
+- **HG column**: `pmSuffix=L` → shows `L` (including eq2 records on the L alignment); otherwise shows `hwyGroup`. Single-side RT-only INDEP ALIGN landmarks have `hwyGroup` forced to `'R'`, and LT-only to `'L'`, in `hsl_queryRampDescriptions` — but only if the nearest preceding record with that pmSuffix shares the same pmPrefix (PMPrefix guard).
 - **Length column**: `crossRouteFormatted` → `------->` ; `hasCrossRoute` → `*P*` ; else distance if H-type.
-- **Row colors**: `hsl-item-eq` (equation), `hsl-item-rb` (route breaks), `hsl-item-cb` (city/county/hsl_end/begin/realignment/IA boundary), `hsl-item-ia-r` (R alignment), `hsl-item-ia-l` (L alignment).
+- **Row colors**: `hsl-item-eq` (equation), `hsl-item-rb` (route breaks), `hsl-item-cb` (city/county/hsl_end/begin/realignment/INDEP ALIGN boundary), `hsl-item-ia-r` (R alignment), `hsl-item-ia-l` (L alignment).
 - **AR/OD columns** (screen renderer only): values within ±0.0005 of zero are clamped to `0.000` to prevent `-0.000` rendering from network calibration offsets.
 - **Intersection desc**: if `crossPmMeasure` → appends `[crossRouteLabel PM]`.
 - **Route break/resume desc**: `ROUTE BREAK` or `ROUTE RESUME` prefix wrapped in `<strong>`; remainder (landmark enrichment if present) in normal weight.
+- **REALIGNMENT desc**: PMPrefix letter bolded via `realignDescHtml` (regex `^(BEGIN|END) ([HMNR]) REALIGNMENT$`) — e.g. "BEGIN **R** REALIGNMENT".
+- **INDEP ALIGN desc**: direction indicator bolded via `indepAlignDescHtml` (word-boundary regex `\b(RT|LT|R|L)\b`) — e.g. "END INDEP ALIGN **RT** LNS".
+- **eq1 + lmDescGreen**: "EQUATES TO" in bold red (`#c00`); lmDesc in green (`#166534`). If lmDesc is a REALIGNMENT, its PMPrefix letter is also bolded inside the green span via `fmtLmDesc`.
+- **eq2 + lmDescGreen**: lmDesc shown in green (`#166534`) with REALIGNMENT PMPrefix bolded via `fmtLmDesc`. Non-REALIGNMENT lmDesc renders plain (esc only).
 
 ### hsl_printAll
 - Renders cover page + legend page + paginated `<table>` sections (one per `_hslPageStarts` entry).
@@ -492,8 +487,7 @@ Writes the current HSL screen results to **layer 215 FeatureServer** in the sele
 Post-pipeline suppression pass applied **after** begin/end records have been inserted.
 Suppression tiers (lower tiers hidden when higher tier exists at same AR ± 0.001):
 1. `hsl_end_*` / `hsl_begin_*` — always shown
-2. `ia_bdry_*` — suppressed if tier 1 at same AR
-3. `citybegin|cityend` — suppressed if tier 1 or 2 at same AR
+2. `citybegin|cityend` — suppressed if tier 1 at same AR
 
 County begin/end records are never suppressed here. The negative-OD/PM guard in `hsl_filterCityBoundaries` handles county begin records that precede the queried range start.
 
@@ -531,13 +525,6 @@ When county is specified, queried using `RouteId LIKE '${county}${route}%'`. Whe
 - _P routes only; county boundaries on L alignments excluded.
 - AR→PM and AR→OD translated; county-prefixed result selection for PM.
 - Collapses multiple non-contiguous segments per county to min/max outer bounds (no BREAK/RESUME for counties).
-
-### queryIndependentAlignmentBoundaries (layer 3)
-- Queries all L/R PMSuffix routes for the route number; filters by county post-query.
-- Extracts M-values from polyline geometry (M-aware coordinates: `[x, y, z?, m]`).
-- Produces synthetic `BEGIN/END LEFT/RIGHT INDEPENDENT ALIGNMENT` landmark pairs at PM min/max.
-- Names: `ia_bdry_L|R_0_begin|end_pmMeasureX1000`.
-- AR selection prefers `SHS_` + routeNum + non-`_S` routes to avoid merge/concurrent route contamination.
 
 ### queryIntersections → queryIntersectionsByDistrict (layers 151)
 - Queries layer 151 twice in parallel: once as Main_RouteNum, once as Cross_RouteNum.
@@ -605,8 +592,8 @@ Equation points are detected on the fly from calibration point data (layer 1):
 
 ## Independent Alignment Sort Logic (`sortWithIndependentAlignments`)
 
-**Location:** `shared.js:571`
-**Called by:** `hsl.js:959`, `hsl.js:1043`, `hsl.js:1538` — always as the innermost step of the pipeline:
+**Location:** `shared.js:592`
+**Called by:** `hsl.js` — always as the innermost step of the pipeline:
 ```javascript
 const allPairs = hsl_filterRealignmentLandmarks(
   hsl_filterCityBoundaries(
@@ -651,7 +638,7 @@ Before sorting, eq2 records with a non-empty `pmPrefix` and `pmMeasure ≈ 0` (m
 p.arMeasure = Math.min(p.arMeasure, minPfxAr - 0.0005);
 ```
 
-where `minPfxAr` is the minimum AR of all non-IA-boundary records sharing the same `pmPrefix`. This handles both undershoot and overshoot from calibration translation — without it the outer grouping loop could reach an R/L record before eq2 and start a premature section.
+where `minPfxAr` is the minimum AR of all records sharing the same `pmPrefix` that are not INDEP ALIGN landmarks (i.e., where `isIABoundaryRec` is false). This handles both undershoot and overshoot from calibration translation — without it the outer grouping loop could reach an R/L record before eq2 and start a premature section.
 
 #### Step 2 — Sort remaining records by ARMeasure
 
@@ -664,13 +651,25 @@ Records are sorted by AR rounded to 3dp. Tiebreaks (in order):
 
 NaN AR values are treated as `Infinity`.
 
+#### Step 2.5 — Pre-compute `indepNoPmPfxMatch`
+
+Before the grouping loop, a `Set` of single-side INDEP ALIGN records that fail a PMPrefix test is built:
+
+- A record is **single-side RT** (hasRT && !hasLT) or **single-side LT** (hasLT && !hasRT).
+- For each such record, scan backward through `main` for the nearest record whose `pmSuffix` matches the target side (`'R'` or `'L'`).
+- If no such record is found, or if its `pmPrefix` differs (after normalizing `'.'` to `''`), add the record to `indepNoPmPfxMatch`.
+
+Records in this set are **skipped** during the eq2 peek (`peekedIABounds` collection), so they are never absorbed into a section's output. They instead pass through the outer loop and sort naturally after the section, alongside other neutral IA boundaries at the same AR.
+
+This prevents single-side INDEP ALIGN records from a different PMPrefix span (e.g. an `END INDEP ALIGN RT LNS` from the main prefix scope appearing after an R-prefix section) from being grouped into the wrong section's R group.
+
 #### Step 3 — Group independent alignment sections (R before L)
 
-`isIABoundaryRec` identifies BEGIN/END INDEPENDENT ALIGNMENT landmark records using a pattern match:
+`isIABoundaryRec` identifies INDEP ALIGN landmark records from layer 123 using a pattern match:
 ```javascript
-const isIABoundaryRec = p => p.type === 'landmark' && p.desc && /INDEP/i.test(p.desc);
+const isIABoundaryRec = p => p.type === 'landmark' && p.desc && /IND.*ALIGN/i.test(p.desc);
 ```
-This catches all abbreviations used in the data ("BEG INDEP ALIGN", "END INDEP ALIGN LT & RT", "BEGIN INDEP ALIGN - LT", etc.). REALIGNMENT records ("BEGIN REALIGNMENT", "END REALIGNMENT") are intentionally **not** matched here — they still trigger sections via the outer loop like any other sfx:R/L record.
+This catches all abbreviations used in the data ("BEG INDEP ALIGN", "END INDEP ALIGN LT & RT", "BEGIN INDEP ALIGN - LT", etc.). REALIGNMENT records ("BEGIN REALIGNMENT", "END REALIGNMENT") are intentionally **not** matched here — they still trigger sections via the outer loop like any other sfx:R/L record. Records with typos like "AIGN" instead of "ALIGN" do not match and are treated as ordinary landmarks.
 
 The outer loop triggers a section when it sees an R or L pmSuffix record **that is not an IA boundary landmark**. Those boundary landmarks pass through the `else` branch individually at their natural AR position.
 
@@ -688,6 +687,7 @@ The inner loop that consumes the section has these critical guards:
 3. **County guard on sfx/hg consume path** — if a record's county differs from the section-trigger county (`sectionCounty`), the loop breaks. Prevents cross-county bundling (e.g. MNO records being consumed into an INY section).
 4. **IA boundary records break the dot-else path** — when the inner loop reaches an `isIABoundaryRec` record on the neutral dot path, it breaks immediately rather than consuming it.
 5. **Dot-else lookahead stops at IA boundaries and sfx:R BEGIN REALIGNMENT** — the forward scan that decides whether to consume a neutral dot record stops if it sees an `isIABoundaryRec` record (no R/L remaining in this span) or a sfx:R "BEGIN REALIGNMENT" landmark (that record is the next section trigger, not a continuation). Note: sfx:L "BEGIN REALIGNMENT" does NOT stop the lookahead — L realignment markers can legitimately appear inside sections.
+6. **`indepNoPmPfxMatch` records are skipped in the eq2 peek** — when the peek encounters an `isIABoundaryRec` record that is in `indepNoPmPfxMatch`, it increments the peek cursor without adding the record to `peekedIABounds`. The record is not absorbed into the section and instead falls through the outer loop at its natural position.
 
 Section output order:
 1. R group: `pmSuffix === 'R'` records confirmed by `hgValue === 'R'` or `alignment === 'R'`
@@ -753,10 +753,8 @@ hsl_filterRealignmentLandmarks(filtered)
   Removes BEGIN/END REALIGNMENT landmarks whose pmKey matches any other record.
   Only keeps alignment='R' realignment landmarks (L duplicates are always dropped).
   Keeps realignment landmarks with blank/null pmMeasure (no pmKey to match against).
-  Suppresses BEGIN/END TEMPORARY CONNECTION/CONNECTOR landmarks when an IA boundary
-    record exists at the same AR (within 0.01); otherwise always shown.
-  IA boundary records: only suppressed when PM < 0 (precedes queried range). Never
-    suppressed by coincident H records — they are authoritative structural markers.
+  Suppresses BEGIN/END TEMPORARY CONNECTION/CONNECTOR landmarks when a natural
+    layer 123 INDEP ALIGN landmark exists at the same AR (within 0.01); otherwise always shown.
   ↓
 allPairs — final ordered list passed to hsl_renderPage()
 ```

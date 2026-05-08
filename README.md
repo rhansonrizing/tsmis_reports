@@ -123,25 +123,11 @@ If the realignment record has no valid PM measure it passes all three checks and
 
 ---
 
-### BEGIN/END Independent Alignment Boundaries (`queryIndependentAlignmentBoundaries` → `hsl_filterRealignmentLandmarks`)
-
-Synthetic `BEGIN LEFT/RIGHT INDEPENDENT ALIGNMENT` and `END LEFT/RIGHT INDEPENDENT ALIGNMENT` records are constructed from layer 3 (PM network polyline features). Each feature's M values are the PM measures; the global min/max per PMSuffix (`L` or `R`) give the begin and end PM. Those PM measures are translated to AR and OD via `networkLayers/3/translate` (targets [4] AR and [5] OD).
-
-An IA boundary record is suppressed (not added to the report) only if:
-
-1. Its PM measure is **negative** or negative-zero (alignment boundary precedes the start of the queried segment).
-
-If the record has no valid PM measure it is always shown. IA boundaries are never suppressed by coincident H records — they are authoritative structural markers.
-
-IA boundary records are excluded from distance calculations.
-
----
-
 ### BEGIN/END TEMPORARY CONNECTION/CONNECTOR Landmarks (`hsl_filterRealignmentLandmarks`)
 
-`BEGIN TEMPORARY CONNECTION`, `END TEMPORARY CONNECTION`, `BEGIN TEMPORARY CONNECTOR`, and `END TEMPORARY CONNECTOR` landmarks are suppressed when an IA boundary record exists at the **same AR** (within **0.01**). This avoids redundant rows when both records appear at the same location — the independent alignment boundary conveys the structural transition more precisely.
+`BEGIN TEMPORARY CONNECTION`, `END TEMPORARY CONNECTION`, `BEGIN TEMPORARY CONNECTOR`, and `END TEMPORARY CONNECTOR` landmarks are suppressed when a natural `INDEP ALIGN` landmark from layer 123 exists at the **same AR** (within **0.01**). This avoids redundant rows when both records appear at the same location — the independent alignment description conveys the structural transition more precisely.
 
-If no IA boundary coincides, the TEMPORARY CONNECTION/CONNECTOR landmark is always shown.
+If no coincident INDEP ALIGN landmark exists, the TEMPORARY CONNECTION/CONNECTOR landmark is always shown.
 
 ---
 
