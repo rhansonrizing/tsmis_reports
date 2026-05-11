@@ -1819,7 +1819,7 @@ async function loadCountyCodeDomain() {
   // Formats a numeric measure as NNN.NNN (3 digits each side of decimal)
   function formatDate(ts) {
     const d = new Date(ts);
-    return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
+    return `${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}/${d.getUTCFullYear()}`;
   }
 
   function padMeasure(val) {
