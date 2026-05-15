@@ -1962,9 +1962,8 @@
       }
 
       const lastPair = allPairs[allPairs.length - 1];
-      // If the last record is a county or city boundary, check whether it falls on
-      // the actual end of the route.  If it does, remove it so that hsl_queryEndRecord
-      // can place an END OF ROUTE record there instead.
+      // If trailing records are city/county boundaries at the true route end, remove all
+      // of them so hsl_queryEndRecord can place a single END OF ROUTE record there instead.
       if (lastPair?.type === 'countyend' || lastPair?.type === 'countybegin' ||
           lastPair?.type === 'cityend'   || lastPair?.type === 'citybegin') {
         const _ridClauses = [...new Set(segments.map(({ fromBest }) => {
@@ -1983,8 +1982,14 @@
             }).toString()
           }).then(r => r.json());
           const routeEnd = (d116.features ?? [])[0]?.attributes?.ToARMeasure;
-          if (routeEnd != null && Math.abs(lastPair.arMeasure - routeEnd) <= 0.005) {
-            allPairs.pop(); // remove the boundary record; END OF ROUTE will replace it
+          if (routeEnd != null) {
+            const boundaryTypes = new Set(['cityend', 'citybegin', 'countyend', 'countybegin']);
+            while (allPairs.length > 0) {
+              const tail = allPairs[allPairs.length - 1];
+              if (boundaryTypes.has(tail.type) && Math.abs(tail.arMeasure - routeEnd) <= 0.05) {
+                allPairs.pop();
+              } else break;
+            }
           }
         } catch (e) {
           console.warn('[hsl end check] layer 116 error:', e.message);
@@ -2003,7 +2008,7 @@
           if (prune.length) allPairs.splice(0, allPairs.length, ...allPairs.filter(p => !prune.includes(p)));
         }
         const existingPmKeys = new Set(allPairs.filter(p => p.type !== 'intersection' && p.type !== 'ramp' && p.pmMeasure !== '' && p.pmMeasure != null && !isNaN(parseFloat(p.pmMeasure))).map(pmKey));
-        if (!endPair.pmMeasure || isNaN(parseFloat(endPair.pmMeasure)) || !existingPmKeys.has(pmKey(endPair))) {
+        if (!endPair.pmMeasure || isNaN(parseFloat(endPair.pmMeasure)) || !existingPmKeys.has(pmKey(endPair)) || endPair.desc.startsWith('END OF ROUTE')) {
           const endHgMap = await queryRangeLayer([endPair], 116, 'Highway_Group');
           const endHg = endHgMap.get(endPair.name) ?? '';
           if (endHg === 'R' || endHg === 'L') {
@@ -2133,6 +2138,42 @@
       for (const p of unsortedPairs) p.hgValue = hgMap.get(p.name) ?? '';
       const allPairs = fixEqPairOrder(hsl_filterRealignmentLandmarks(hsl_filterCityBoundaries(sortWithIndependentAlignments(unsortedPairs))));
       if (allPairs.length === 0) { hsl_showRampResults('none'); return; }
+      // If trailing records are city/county boundaries at the true route end, remove all
+      // of them so hsl_queryEndRecord can place a single END OF ROUTE record there instead.
+      {
+        const _tail = allPairs[allPairs.length - 1];
+        if (_tail?.type === 'cityend' || _tail?.type === 'citybegin' ||
+            _tail?.type === 'countyend' || _tail?.type === 'countybegin') {
+          const _ridClauses = [...new Set(segments.map(({ fromBest }) => {
+            const _rid = fromBest.routeId.endsWith('_S') ? fromBest.routeId.slice(0, -2) + '_P' : fromBest.routeId;
+            return `RouteID = '${_rid}'`;
+          }))];
+          try {
+            const d116 = await fetch(`${CONFIG.mapServiceUrl}/116/query`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({
+                where: `(${_ridClauses.join(' OR ')})${getDateFilter()}`,
+                outFields: 'RouteID,ToARMeasure', returnGeometry: 'false',
+                orderByFields: 'ToARMeasure DESC', resultRecordCount: '1',
+                ...versionParam(), f: 'json', token: _token
+              }).toString()
+            }).then(r => r.json());
+            const routeEnd = (d116.features ?? [])[0]?.attributes?.ToARMeasure;
+            if (routeEnd != null) {
+              const boundaryTypes = new Set(['cityend', 'citybegin', 'countyend', 'countybegin']);
+              while (allPairs.length > 0) {
+                const tail = allPairs[allPairs.length - 1];
+                if (boundaryTypes.has(tail.type) && Math.abs(tail.arMeasure - routeEnd) <= 0.05) {
+                  allPairs.pop();
+                } else break;
+              }
+            }
+          } catch (e) {
+            console.warn('[hsl end check] layer 116 error:', e.message);
+          }
+        }
+      }
       const lastPair = allPairs[allPairs.length - 1];
       const endPair = (lastPair?.type === 'cityend' || lastPair?.type === 'citybegin' || lastPair?.type === 'countyend' || lastPair?.type === 'countybegin') ? null : await hsl_queryEndRecord(segments, null, null, paddedRouteNum);
       if (endPair) {
@@ -2146,7 +2187,7 @@
           if (prune.length) allPairs.splice(0, allPairs.length, ...allPairs.filter(p => !prune.includes(p)));
         }
         const existingPmKeys = new Set(allPairs.filter(p => p.type !== 'intersection' && p.type !== 'ramp' && p.pmMeasure !== '' && p.pmMeasure != null && !isNaN(parseFloat(p.pmMeasure))).map(pmKey));
-        if (!endPair.pmMeasure || isNaN(parseFloat(endPair.pmMeasure)) || !existingPmKeys.has(pmKey(endPair))) {
+        if (!endPair.pmMeasure || isNaN(parseFloat(endPair.pmMeasure)) || !existingPmKeys.has(pmKey(endPair)) || endPair.desc.startsWith('END OF ROUTE')) {
           const endHgMap = await queryRangeLayer([endPair], 116, 'Highway_Group');
           const endHg = endHgMap.get(endPair.name) ?? '';
           if (endHg === 'R' || endHg === 'L') {
@@ -2622,7 +2663,16 @@
           : firstNR;
       }
       const nextOd = nextEntry ? parseFloat(nextEntry.odMeasure) : NaN;
-      if (!isNaN(curOd) && !isNaN(nextOd)) return (nextOd - curOd).toFixed(3);
+      if (!isNaN(curOd) && !isNaN(nextOd)) {
+        const normPfx = r => (r.pmPrefix === '.' ? '' : (r.pmPrefix ?? ''));
+        const pPm = parseFloat(p.pmMeasure);
+        const nPm = parseFloat(nextEntry.pmMeasure);
+        if (!isNaN(pPm) && !isNaN(nPm) &&
+            normPfx(p) === normPfx(nextEntry) &&
+            pPm.toFixed(3) === nPm.toFixed(3) &&
+            (p.pmSuffix ?? '.') === (nextEntry.pmSuffix ?? '.')) return '0.000';
+        return (nextOd - curOd).toFixed(3);
+      }
       if (!nextEntry && p.type === 'landmark') return '0.000';
       return '';
     });
