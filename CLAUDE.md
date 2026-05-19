@@ -231,13 +231,17 @@ Select District + County + Route
 
 Phase 1: 8 parallel queries
   queryAttributeSet(segments, district, county)         → rampPairs
-  queryLandmarks(segments, routeSuffix, district, county) → landmarkPairs (layer 123; AR→OD translated)
+  queryLandmarks(segments, routeSuffix, district, county) → { pairs: landmarkPairs, selfIntersectARs } (layer 123; AR→OD translated; SELF INTERSECT records excluded from pairs, their ARs returned separately)
   queryRouteBreaks(segments, routeSuffix, district, county) → routeBreakPairs (layer 133; AR→OD translated)
   queryIntersections(segments, routeNum, district, county)  → {intersectionPairs, unresolved} (layer 151; PM→AR+OD translated)
   queryEquationPointsFromNetwork(segments, routeNum, d, c)  → equationPairs (layer 1→translate)
   queryCityBegins(segments, routeNum, district, county)     → cityBeginPairs (layer 74; AR→OD+PM translated)
   queryCountyBegins(segments, routeNum, district, county)   → countyBeginPairs (layer 85; AR→OD+PM translated)
   queryRouteDirection(routeNum)                              → direction (layer 304)
+
+Phase 1.5: SELF INTERSECT suppression
+  If selfIntersectARs is non-empty, find all equation pairs whose AR is within 0.005 of any
+  SELF INTERSECT AR and remove the entire pair (both eq1 and eq2) from unsortedPairs.
 
 Phase 2: HG pre-fetch
   queryRangeLayer(unsortedPairs, 116, 'Highway_Group') → hgMap
@@ -454,6 +458,7 @@ Produces an array parallel to `results`. Each entry is `(nextOD - curOD).toFixed
 - Skips eq1 (`!p.isSecondEq`) and Route Break records — no length shown.
 - pmSuffix-aware: R-suffix records look for next-H that isn't L-suffix; L-suffix looks for next-H that isn't R-suffix; dot-suffix skips R/L-suffix H records.
 - Terminal records (`hsl_end_*`, `END * REALIGNMENT`, `END TEMPORARY CONNECTION`) get `'0.000'` when no next entry exists.
+- **Same-PM clamp**: if consecutive H records share the same `pmPrefix|pmMeasure(3dp)|pmSuffix`, distance is forced to `'0.000'` regardless of OD difference (prevents floating-point translation noise from producing `000.001`).
 
 ### hsl_renderItem / hsl_renderItemAsRow
 Screen vs. print row renderers. Key display rules:
@@ -496,7 +501,9 @@ Suppression tiers (lower tiers hidden when higher tier exists at same AR ± 0.00
 1. `hsl_end_*` / `hsl_begin_*` — always shown
 2. `citybegin|cityend` — suppressed if tier 1 at same AR
 
-County begin/end records are never suppressed here. The negative-OD/PM guard in `hsl_filterCityBoundaries` handles county begin records that precede the queried range start.
+County begin/end records are never suppressed here. The OD/PM guard in `hsl_filterCityBoundaries` handles county begin records that precede the queried range start.
+
+**END OF ROUTE last-position guarantee**: after both `hsl_applySyntheticHierarchy` and `hsl_applyRouteBreakEquations` run, a final pass moves any `hsl_end_*` record to the last position in `allPairs` if it was displaced (e.g., by route-break consecutive-ordering logic). Applied in both district/route and postmile modes.
 
 ---
 
@@ -506,6 +513,7 @@ County begin/end records are never suppressed here. The negative-OD/PM guard in 
 - Queries by RouteNum+ARMeasure range (not RouteID) so both P and S routes are captured in one clause.
 - Uses composite key `"Landmarks_Short|ARMeasure"` as `pair.name` to allow multiple identical names at different ARs.
 - BEGIN/END REALIGNMENT landmarks get the pmPrefix embedded in desc (e.g., `"BEGIN R REALIGNMENT"`).
+- **`SELF INTERSECT` records are excluded** from the returned pairs and never rendered. A parallel suffix-unrestricted query collects their `ARMeasure` values into `selfIntersectARs` (returned alongside `pairs`). Any equation pair whose AR falls within 0.005 of a SELF INTERSECT AR is suppressed in Phase 1.5. The suffix-free query is necessary because SELF INTERSECT landmarks are stored with `RouteSuffix = 'R'` and would be excluded by the main query's suffix filter.
 - **County filter applied** — `AND County = '<code>'` included in WHERE when county is selected. Note: landmarks stored under the adjacent county at a county boundary (e.g. TRONA RD stored as `county=INY` at the SBD/INY line) will be excluded by this filter in county-scoped reports — accepted as a known data-quality limitation.
 - All results AR→OD translated (network 4→5).
 
@@ -747,9 +755,9 @@ sortWithIndependentAlignments(unsortedPairs)
     Diff county  → countyend sorts first (landmark is incoming county marker, e.g. "BEGIN OF COUNTY")
   ↓
 hsl_filterCityBoundaries(sorted)
-  Per-record drops: AR out of extent (±0.005), OD < 0, PM < 0, AR within 0.01 of a route break.
-  NaturalH suppression: countybegin (and citybegin/end) records whose PM key matches a
-    landmark/equation/routebreak record are dropped.
+  Per-record drops: AR out of extent (±0.005), OD < −0.001, PM < −0.001, AR within 0.01 of a route break.
+  NaturalH suppression: citybegin/cityend records whose PM key matches a landmark/equation/routebreak
+    record are dropped. County begin/end records are never suppressed by this rule.
   Compact pass (four sub-passes on city records only):
     Pass 1 — dedup same-type same-city within 0.01 AR (keep first)
     Pass 2 — cancel same-city cityend+citybegin within 0.01 AR (zero-width gap)

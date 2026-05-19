@@ -112,7 +112,7 @@
       if (p.arMeasure != null && !isNaN(p.arMeasure) && (p.arMeasure < minAR - 0.005 || p.arMeasure > maxAR + 0.005)) {
         return false;
       }
-      if (p.odMeasure !== '' && p.odMeasure != null && parseFloat(p.odMeasure) < 0) {
+      if (p.odMeasure !== '' && p.odMeasure != null && parseFloat(p.odMeasure) < -0.001) {
         return false;
       }
       const pmVal = parseFloat(p.pmMeasure);
@@ -142,7 +142,7 @@
         .map(pmPrefixMeasure)
     );
     const cityAfterH = filtered.filter(p => {
-      if (!isCityType(p.type) && p.type !== 'countybegin') return true;
+      if (!isCityType(p.type)) return true;
       if (p.pmMeasure === '' || p.pmMeasure == null || isNaN(parseFloat(p.pmMeasure))) return true;
       return !naturalHKeys.has(pmPrefixMeasure(p));
     });
@@ -306,32 +306,48 @@
       f:              'json',
       token:          _token
     });
-    let resp, data;
+    // Parallel query for SELF INTERSECT landmarks — same range/county/date filters
+    // but no suffix restriction since these are stored under the R alignment RouteSuffix.
+    const siWhere = uniqueClauses.length === 1
+      ? uniqueClauses[0].slice(1, -1) + districtFilter + countyFilter + ` AND Landmarks_Short = 'SELF INTERSECT' AND LRSToDate IS NULL` + dateFilter
+      : `(${uniqueClauses.join(' OR ')})${districtFilter}${countyFilter} AND Landmarks_Short = 'SELF INTERSECT' AND LRSToDate IS NULL${dateFilter}`;
+    const siBody = new URLSearchParams({
+      where: siWhere, outFields: 'ARMeasure', returnGeometry: 'false',
+      ...versionParam(), f: 'json', token: _token
+    });
+    let resp, data, siData;
     try {
-      resp = await fetch(`${CONFIG.mapServiceUrl}/123/query`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body:    body.toString()
-      });
-      data = await resp.json();
+      [resp, siData] = await Promise.all([
+        fetch(`${CONFIG.mapServiceUrl}/123/query`, {
+          method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString()
+        }).then(r => r.json()),
+        fetch(`${CONFIG.mapServiceUrl}/123/query`, {
+          method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: siBody.toString()
+        }).then(r => r.json()).catch(() => ({ features: [] }))
+      ]);
+      data = resp;
     } catch (e) {
       console.error('[queryLandmarks] error:', e.message);
-      return [];
+      return { pairs: [], selfIntersectARs: [] };
     }
     if (data.error) {
       const code = data.error.code;
-      if (code === 498 || code === 499) { _token = null; login(); return []; }
+      if (code === 498 || code === 499) { _token = null; login(); return { pairs: [], selfIntersectARs: [] }; }
       console.error(`[queryLandmarks] API error ${code}: ${data.error.message}`);
-      return [];
+      return { pairs: [], selfIntersectARs: [] };
     }
     const features = data.features;
-    if (!Array.isArray(features)) return [];
-    if (data.exceededTransferLimit) console.warn('[queryLandmarks] exceededTransferLimit â€” results truncated.');
+    if (!Array.isArray(features)) return { pairs: [], selfIntersectARs: [] };
+    if (data.exceededTransferLimit) console.warn('[queryLandmarks] exceededTransferLimit — results truncated.');
+    const selfIntersectARs = (siData?.features ?? [])
+      .map(f => f.attributes?.ARMeasure)
+      .filter(ar => ar != null);
     const nameMap = new Map();
     for (const f of features) {
       const a = f.attributes ?? {};
       const name = a.Landmarks_Short;
       if (name == null || name === '') continue;
+      if (name.toLowerCase() === 'self intersect') { selfIntersectARs.push(a.ARMeasure); continue; }
       // For BEGIN/END REALIGNMENT landmarks, incorporate the PMPrefix into the
       // description so it reads "BEGIN R REALIGNMENT" (rendered with prefix bold).
       const pmPfx = a.PMPrefix && a.PMPrefix !== '.' ? String(a.PMPrefix).trim() : '';
@@ -399,7 +415,7 @@
       });
     }));
 
-    return pairs;
+    return { pairs, selfIntersectARs };
   }
 
   // â”€â”€ HSL: Query route breaks (layer 133) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1904,7 +1920,7 @@
     startThinking(btn);
     clearResults();
     try {
-      const [rampPairs, landmarkPairs, routeBreakPairs, { pairs: intersectionPairs, unresolved: unresolvedIntersections }, equationPairs, cityBeginPairs, countyBeginPairs, direction] = await Promise.all([
+      const [rampPairs, { pairs: landmarkPairs, selfIntersectARs }, routeBreakPairs, { pairs: intersectionPairs, unresolved: unresolvedIntersections }, equationPairs, cityBeginPairs, countyBeginPairs, direction] = await Promise.all([
         queryAttributeSet(segments, district, county),
         queryLandmarks(segments, routeSuffix, district, county),
         queryRouteBreaks(segments, routeSuffix, district, county),
@@ -1949,6 +1965,15 @@
       const dataArMin1  = dataArVals1.length ? Math.min(...dataArVals1) - 0.01 : -Infinity;
       const dataArMax1  = dataArVals1.length ? Math.max(...dataArVals1) + 0.01 :  Infinity;
       const unsortedPairs = [...dataPairs1];
+      if (selfIntersectARs.length > 0) {
+        const siPairIds = new Set(unsortedPairs.filter(p => {
+          if (p.type !== 'equation') return false;
+          const ar = parseFloat(p.arMeasure);
+          return !isNaN(ar) && selfIntersectARs.some(siAr => Math.abs(ar - siAr) < 0.005);
+        }).map(p => p.eqPairId));
+        if (siPairIds.size > 0)
+          unsortedPairs.splice(0, unsortedPairs.length, ...unsortedPairs.filter(p => p.type !== 'equation' || !siPairIds.has(p.eqPairId)));
+      }
       hsl_fixCountyLineLandmarks(unsortedPairs);
       const hgMap = await queryRangeLayer(unsortedPairs, 116, 'Highway_Group');
       for (const p of unsortedPairs) p.hgValue = hgMap.get(p.name) ?? '';
@@ -2049,6 +2074,7 @@
       const cityPairsForLookup = allPairs.filter(p => p.type === 'citybegin' || p.type === 'cityend');
       allPairs.splice(0, allPairs.length, ...hsl_applySyntheticHierarchy(allPairs));
       hsl_applyRouteBreakEquations(allPairs);
+      { const ei = allPairs.findIndex(p => p.name?.startsWith('hsl_end_')); if (ei >= 0 && ei < allPairs.length - 1) allPairs.push(allPairs.splice(ei, 1)[0]); }
       await hsl_queryRampDescriptions(allPairs, unresolvedIntersections, hgMap, cityPairsForLookup);
     } catch (err) {
       hsl_showRampResults('error', err.message || 'An error occurred.');
@@ -2115,7 +2141,7 @@
         return;
       }
       const paddedRouteNum = from.routeNum.padStart(3, '0');
-      const [rampPairs, landmarkPairs, routeBreakPairs, { pairs: intersectionPairs, unresolved: unresolvedIntersections }, equationPairs, cityBeginPairs, countyBeginPairs, direction] = await Promise.all([
+      const [rampPairs, { pairs: landmarkPairs, selfIntersectARs }, routeBreakPairs, { pairs: intersectionPairs, unresolved: unresolvedIntersections }, equationPairs, cityBeginPairs, countyBeginPairs, direction] = await Promise.all([
         queryAttributeSet(segments),
         queryLandmarks(segments, from.routeSuffix),
         queryRouteBreaks(segments, from.routeSuffix),
@@ -2133,6 +2159,15 @@
       const dataArMin2  = dataArVals2.length ? Math.min(...dataArVals2) - 0.01 : -Infinity;
       const dataArMax2  = dataArVals2.length ? Math.max(...dataArVals2) + 0.01 :  Infinity;
       const unsortedPairs = [...dataPairs2];
+      if (selfIntersectARs.length > 0) {
+        const siPairIds = new Set(unsortedPairs.filter(p => {
+          if (p.type !== 'equation') return false;
+          const ar = parseFloat(p.arMeasure);
+          return !isNaN(ar) && selfIntersectARs.some(siAr => Math.abs(ar - siAr) < 0.005);
+        }).map(p => p.eqPairId));
+        if (siPairIds.size > 0)
+          unsortedPairs.splice(0, unsortedPairs.length, ...unsortedPairs.filter(p => p.type !== 'equation' || !siPairIds.has(p.eqPairId)));
+      }
       hsl_fixCountyLineLandmarks(unsortedPairs);
       const hgMap = await queryRangeLayer(unsortedPairs, 116, 'Highway_Group');
       for (const p of unsortedPairs) p.hgValue = hgMap.get(p.name) ?? '';
@@ -2224,6 +2259,7 @@
       const cityPairsForLookup = allPairs.filter(p => p.type === 'citybegin' || p.type === 'cityend');
       allPairs.splice(0, allPairs.length, ...hsl_applySyntheticHierarchy(allPairs));
       hsl_applyRouteBreakEquations(allPairs);
+      { const ei = allPairs.findIndex(p => p.name?.startsWith('hsl_end_')); if (ei >= 0 && ei < allPairs.length - 1) allPairs.push(allPairs.splice(ei, 1)[0]); }
       await hsl_queryRampDescriptions(allPairs, unresolvedIntersections, hgMap, cityPairsForLookup);
     } finally {
       btn.disabled = false;
