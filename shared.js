@@ -649,7 +649,10 @@ async function loadCountyCodeDomain() {
       }
     }
 
+    console.log('[sortWithIA] starting .sort() on', main.length, 'records');
+    let _sortCalls = 0;
     main.sort((a, b) => {
+      _sortCalls++;
       const aAr = a.arMeasure;
       const bAr = b.arMeasure;
       // Treat missing AR as Infinity so null/NaN records don't break comparator
@@ -781,6 +784,7 @@ async function loadCountyCodeDomain() {
       }
       return 0;
     });
+    console.log('[sortWithIA] .sort() done after', _sortCalls, 'comparator calls; building indepNoPmPfxMatch');
     // Matches any BEGIN/END INDEPENDENT ALIGNMENT landmark regardless of the
     // exact wording used (data uses many abbreviations: "BEG INDEP ALIGN",
     // "END INDEP ALIGN LT & RT", "BEGIN INDEP ALIGN - LT", etc.).
@@ -816,9 +820,13 @@ async function loadCountyCodeDomain() {
       }
     }
 
+    console.log('[sortWithIA] indepNoPmPfxMatch done —', indepNoPmPfxMatch.size, 'records; starting grouping loop');
     const grouped = [];
     let i = 0;
+    let _outerIter = 0;
     while (i < main.length) {
+      _outerIter++;
+      if (_outerIter % 100 === 0) console.log('[sortWithIA] outer loop iter', _outerIter, 'i=', i, 'grouped=', grouped.length);
       // Skip records already absorbed into a preceding section's tail scan.
       if (absorbedRecs.has(main[i])) { i++; continue; }
       if ((main[i].pmSuffix === 'R' || main[i].pmSuffix === 'L') && !isIABoundaryRec(main[i]) &&
