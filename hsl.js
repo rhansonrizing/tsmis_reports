@@ -1984,8 +1984,16 @@
       console.log('[HSL D/R] phase 2: HG pre-fetch for', unsortedPairs.length, 'pairs');
       const hgMap = await queryRangeLayer(unsortedPairs, 116, 'Highway_Group');
       for (const p of unsortedPairs) p.hgValue = hgMap.get(p.name) ?? '';
-      console.log('[HSL D/R] phase 2 done, phase 3: sort pipeline');
-      const allPairs = fixEqPairOrder(hsl_filterRealignmentLandmarks(hsl_filterCityBoundaries(sortWithIndependentAlignments(unsortedPairs))));
+      const _typeCounts = unsortedPairs.reduce((m, p) => { m[p.type] = (m[p.type] ?? 0) + 1; return m; }, {});
+      console.log('[HSL D/R] phase 2 done, phase 3: sort pipeline,', unsortedPairs.length, 'pairs', JSON.stringify(_typeCounts));
+      console.log('[HSL D/R] sortWithIndependentAlignments start');
+      const _sorted = sortWithIndependentAlignments(unsortedPairs);
+      console.log('[HSL D/R] sortWithIA done —', _sorted.length, 'pairs; filterCityBoundaries start');
+      const _filtered1 = hsl_filterCityBoundaries(_sorted);
+      console.log('[HSL D/R] filterCityBoundaries done —', _filtered1.length, '; filterRealignmentLandmarks start');
+      const _filtered2 = hsl_filterRealignmentLandmarks(_filtered1);
+      console.log('[HSL D/R] filterRealignmentLandmarks done —', _filtered2.length, '; fixEqPairOrder start');
+      const allPairs = fixEqPairOrder(_filtered2);
       console.log('[HSL D/R] phase 3 done —', allPairs.length, 'pairs after sort/filter');
       if (allPairs.length === 0) { hsl_showRampResults('none'); return; }
       // When county=ALL, a mid-route county transition shows both COUNTY END and
