@@ -1479,6 +1479,7 @@ async function loadCountyCodeDomain() {
       const page = data.features;
       if (!Array.isArray(page) || page.length === 0) break;
       allFeatures.push(...page);
+      console.log(`[queryRamps] offset=${offset} got=${page.length} total=${allFeatures.length} exceeded=${!!data.exceededTransferLimit}`);
       if (!data.exceededTransferLimit) break;
       offset += page.length;
     }
