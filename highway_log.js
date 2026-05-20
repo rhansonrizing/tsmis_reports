@@ -416,7 +416,7 @@
     startThinking(btn);
     clearResults();
     try {
-      const [landmarkPairs, cityBeginPairs, districtBeginPairs, routeBreakPairs, direction] = await Promise.all([
+      const [{ pairs: landmarkPairs }, cityBeginPairs, districtBeginPairs, routeBreakPairs, direction] = await Promise.all([
         queryLandmarks(segments, routeSuffix, district, county),
         queryCityBegins(segments, paddedRoute, district, county),
         hl_queryDistrictBegins(segments, paddedRoute),
@@ -502,7 +502,7 @@
       if (segments.length === 0) { hl_showResults('error', 'Translation failed.'); return; }
       const paddedRouteNum = from.routeNum.padStart(3, '0');
       const routeSuffix    = from.routeSuffix === '.' ? '' : from.routeSuffix;
-      const [landmarkPairs, cityBeginPairs, districtBeginPairs, routeBreakPairs, direction] = await Promise.all([
+      const [{ pairs: landmarkPairs }, cityBeginPairs, districtBeginPairs, routeBreakPairs, direction] = await Promise.all([
         queryLandmarks(segments, routeSuffix),
         queryCityBegins(segments, paddedRouteNum),
         hl_queryDistrictBegins(segments, paddedRouteNum),

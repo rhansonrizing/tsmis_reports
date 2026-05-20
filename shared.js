@@ -1715,7 +1715,7 @@ async function loadCountyCodeDomain() {
   function changePageFirst()  { _rdPageCtrl.changePageFirst(); }
   function changePageLast()   { _rdPageCtrl.changePageLast(); }
 
-  function printAll() {
+  async function printAll() {
     if (document.getElementById('reportSelect').value === 'highway_sequence')    { hsl_printAll();  return; }
     if (document.getElementById('reportSelect').value === 'Ramp_Summary')        { rs_printAll();   return; }
     if (document.getElementById('reportSelect').value === 'intersection_detail') { intd_printAll(); return; }
@@ -1723,45 +1723,48 @@ async function loadCountyCodeDomain() {
     const box = document.getElementById('rampResults');
     const saved = box.innerHTML;
 
-    const routeLine3  = _routeLabel ? `Route: ${esc(_routeLabel)}&emsp;&emsp;&emsp;Direction: ${esc(_directionFrom)} &ndash; ${esc(_directionTo)}` : '';
-    const reportTitle = renderActionBar('TASAS Selective Record Retrieval', 'TSAR - Ramp Detail', routeLine3, null, null);
-
-    const rdOnOff = getOnOffFilter();
-    const rdOnOffLabel =
-      rdOnOff === 1 ? 'All On Ramps' :
-      rdOnOff === 0 ? 'All Off Ramps' :
-      rdOnOff === 2 ? 'All Other Ramps' : 'All Ramps';
+    const rdTitle = await showPrompt('Enter report title:');
+    if (rdTitle === null) return;
     const coverPage = buildCoverPage({
       coverTitle:  'TSAR - RAMP DETAIL',
-      reportTitle: _routeLabel ? `${rdOnOffLabel} on Route ${_routeLabel}` : rdOnOffLabel,
+      reportTitle: rdTitle,
       refDate:     document.getElementById('refDate').value || null,
       district:    document.getElementById('districtSelect').value || null,
       county:      getDistrictCounty() || null,
       route:       _routeLabel || null,
     });
 
-    const header =
-      `<div class="ramp-list-header ramp-col-template">
-         <span>Location</span>
-         <span>P<br>R<br>E</span>
-         <span>PM</span>
-         <span>DATE OF<br>RECORD</span>
-         <span>H<br>G</span>
-         <span>AREA 4</span>
-         <span>CITY CODE</span>
-         <span>R<br>U</span>
-         <span>O<br>F</span>
-         <span>AADT<br>YEAR</span>
-         <span>ADT</span>
-         <span>T<br>Y</span>
-         <span>Description</span>
-       </div>`;
+    const routeDir = _routeLabel
+      ? `Route: ${esc(_routeLabel)}&emsp;&emsp;&emsp;Direction: ${esc(_directionFrom)} &ndash; ${esc(_directionTo)}`
+      : '';
+    const NCOLS = 13;
+    const thead = `<thead>
+      ${routeDir ? `<tr class="rd-print-route-row"><td colspan="${NCOLS}">${routeDir}</td></tr>` : ''}
+      <tr>
+        <th>Location</th><th>P<br>R<br>E</th><th>PM</th><th>DATE OF<br>RECORD</th>
+        <th>H<br>G</th><th>AREA 4</th><th>CITY CODE</th><th>R<br>U</th><th>O<br>F</th>
+        <th>AADT<br>YEAR</th><th>ADT</th><th>T<br>Y</th><th>Description</th>
+      </tr></thead>`;
 
-    const items = _allResults.map((p, i) => renderItem(p, i)).join('');
+    const rows = _allResults.map(p => `<tr>
+      <td>${p.district && p.county ? `${esc(p.district)}-${esc(String(p.county).replace(/\.$/, ''))}-${esc(_routeLabel)}` : ''}</td>
+      <td>${p.pmPrefix && p.pmPrefix !== '.' ? esc(p.pmPrefix) : ''}</td>
+      <td>${esc(padMeasure(p.pmMeasure))}</td>
+      <td>${p.startDate != null ? esc(formatDate(p.startDate)) : ''}</td>
+      <td>${p.pmSuffix === 'L' ? 'L' : p.hwyGroup ? esc(p.hwyGroup) : ''}</td>
+      <td>${p.noLinearEvent ? '-' : p.area4 === 1 ? 'Y' : p.area4 === 0 ? 'N' : ''}</td>
+      <td>${p.cityCode ? esc(p.cityCode) : ''}</td>
+      <td>${p.popCode ? esc(p.popCode) : ''}</td>
+      <td>${p.noLinearEvent ? '-' : p.onOff === 0 ? 'F' : p.onOff === 1 ? 'N' : p.onOff === 2 ? 'T' : ''}</td>
+      <td>${p.aadtYear ? esc(p.aadtYear) : ''}</td>
+      <td>${p.aadt != null ? String(p.aadt).padStart(6, '0') : ''}</td>
+      <td>${p.noLinearEvent ? '-' : p.rampDesign ? esc(p.rampDesign) : ''}</td>
+      <td>${p.noLinearEvent ? '<i>NO RAMP LINEAR EVENT</i>' : p.desc ? esc(p.desc) : ''}</td>
+    </tr>`).join('');
 
     const generatedFooter = `<div class="generated-on">Generated on ${esc(_generatedOn)}</div>`;
 
-    box.innerHTML = `${coverPage}${reportTitle}${header}<ul class="ramp-list">${items}</ul>${generatedFooter}`;
+    box.innerHTML = `${coverPage}<table class="rd-print-table">${thead}<tbody>${rows}</tbody></table>${generatedFooter}`;
     window.addEventListener('afterprint', () => { box.innerHTML = saved; }, { once: true });
     window.print();
   }
@@ -1797,6 +1800,36 @@ async function loadCountyCodeDomain() {
   }
 
   // ── Shared: Utilities & date filters ─────────────────────────────────────
+
+  // Returns a Promise that resolves to the entered string, or null if cancelled.
+  function showPrompt(message) {
+    return new Promise(resolve => {
+      document.getElementById('promptModalMessage').textContent = message;
+      const input    = document.getElementById('promptModalInput');
+      const backdrop = document.getElementById('promptModal');
+      input.value = '';
+      backdrop.classList.add('open');
+      input.focus();
+      const ok     = document.getElementById('promptModalOk');
+      const cancel = document.getElementById('promptModalCancel');
+      function done(result) {
+        backdrop.classList.remove('open');
+        ok.removeEventListener('click',       onOk);
+        cancel.removeEventListener('click',   onCancel);
+        input.removeEventListener('keydown',  onKey);
+        resolve(result);
+      }
+      function onOk()     { done(input.value); }
+      function onCancel() { done(null); }
+      function onKey(e) {
+        if (e.key === 'Enter')  onOk();
+        if (e.key === 'Escape') onCancel();
+      }
+      ok.addEventListener('click',      onOk);
+      cancel.addEventListener('click',  onCancel);
+      input.addEventListener('keydown', onKey);
+    });
+  }
 
   // Returns a Promise that resolves true (Yes) or false (No).
   function showConfirm(message) {
