@@ -363,7 +363,7 @@
 
     .hsl-ramp-col-template {
       display: grid;
-      grid-template-columns: minmax(0,0.55fr) minmax(0,0.7fr) minmax(0,0.3fr) 8ch minmax(0,0.4fr) minmax(0,0.175fr) minmax(0,0.3fr) minmax(0,1.1fr) minmax(0,4fr) 8ch 8ch;
+      grid-template-columns: minmax(0,0.55fr) minmax(0,0.7fr) minmax(0,0.3fr) 8ch minmax(0,0.4fr) minmax(0,0.175fr) minmax(0,0.3fr) minmax(0,1.1fr) minmax(0,4fr);
       gap: 0.5rem;
       align-items: center;
     }

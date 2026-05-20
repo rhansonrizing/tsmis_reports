@@ -2766,8 +2766,6 @@
          ${hgAndF}
          ${isEq1 ? '<span></span>' : `<span style="display:block;text-align:center;">${p.crossRouteFormatted ? '------->' : p.hasCrossRoute ? '*P*' : p.featureType !== 'R' && p.featureType !== 'I' && length !== '' ? padMeasure(length) : ''}</span>`}
          ${isEq1 ? `<span style="text-align:left;">${p.lmDesc ? '<strong style="color:#c00;">EQUATES TO</strong> ' + (p.lmDescGreen ? `<span style="color:#166534;">${fmtLmDesc(p.lmDesc)}</span>` : esc(p.lmDesc)) : 'EQUATES TO'}</span>` : `<span style="text-align:left;">${(p.lmDesc || p.desc) ? (p.type === 'routebrklm' ? esc(p.desc).replace(/\b((?:RTE|ROUTE)\s+(?:BRK|BREAK))\b/g, '<strong>$1</strong>') : p.type === 'routebreak' ? esc(p.desc).replace(/^(ROUTE (?:BREAK|RESUME))/, '<strong>$1</strong>') : isRealignment ? realignDescHtml : isIndepAlign ? indepAlignDescHtml : (p.type === 'equation' && p.lmDesc && p.lmDescGreen) ? `<span style="color:#166534;">${fmtLmDesc(p.lmDesc)}</span>` : esc(p.lmDesc || p.desc)) : ''}</span>`}
-         <span style="color:#6b7280;font-size:0.75em;text-align:right;">${p.arMeasure != null && !isNaN(p.arMeasure) ? (v => Math.abs(v) < 0.0005 ? (0).toFixed(3) : v.toFixed(3))(parseFloat(p.arMeasure)) : ''}</span>
-         <span style="color:#6b7280;font-size:0.75em;text-align:right;">${p.odMeasure !== '' && p.odMeasure != null ? (v => Math.abs(v) < 0.0005 ? (0).toFixed(3) : v.toFixed(3))(parseFloat(p.odMeasure)) : ''}</span>
        </li>`;
   }
 
@@ -2873,8 +2871,6 @@
          <span style="padding-left:3ch">FT</span>
          <span style="padding-left:5ch">DISTANCE TO<br>NEXT POINT</span>
          <span style="padding-left:5ch">Description</span>
-         <span style="color:#6b7280;">AR</span>
-         <span style="color:#6b7280;">OD</span>
        </div>`;
     const lengths = _hslLengths ?? hsl_computeLengths(_allResults);
     const items = pageSlice.map((p, i) => hsl_renderItem(p, start + i, lengths)).join('');
