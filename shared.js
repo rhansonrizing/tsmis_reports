@@ -842,6 +842,7 @@ async function loadCountyCodeDomain() {
         // tailSection collects records absorbed past an eq2 break that belongs
         // to this same independent alignment span.
         const tailSection = [];
+        const _iBeforeInner = i;
         while (i < main.length) {
           const cur = main[i];
           // Equation records must not be classified by hgValue — their highway group
@@ -997,6 +998,15 @@ async function loadCountyCodeDomain() {
               break;
             }
           }
+        }
+        if (i === _iBeforeInner) {
+          const _tr = main[_iBeforeInner];
+          console.error('[sortWithIA] BUG: inner loop stuck at i=', _iBeforeInner, JSON.stringify({
+            type: _tr?.type, pmSuffix: _tr?.pmSuffix, hgValue: _tr?.hgValue,
+            county: _tr?.county, desc: (_tr?.desc ?? '').slice(0, 80), sectionCounty,
+            inAbsorbed: absorbedRecs.has(_tr)
+          }));
+          i++; // force advance to break infinite loop
         }
         const section = main.slice(j, i);
         // Post-section absorption: absorb any immediately-following IA boundary
