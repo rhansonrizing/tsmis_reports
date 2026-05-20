@@ -649,10 +649,7 @@ async function loadCountyCodeDomain() {
       }
     }
 
-    console.log('[sortWithIA] starting .sort() on', main.length, 'records');
-    let _sortCalls = 0;
     main.sort((a, b) => {
-      _sortCalls++;
       const aAr = a.arMeasure;
       const bAr = b.arMeasure;
       // Treat missing AR as Infinity so null/NaN records don't break comparator
@@ -784,7 +781,6 @@ async function loadCountyCodeDomain() {
       }
       return 0;
     });
-    console.log('[sortWithIA] .sort() done after', _sortCalls, 'comparator calls; building indepNoPmPfxMatch');
     // Matches any BEGIN/END INDEPENDENT ALIGNMENT landmark regardless of the
     // exact wording used (data uses many abbreviations: "BEG INDEP ALIGN",
     // "END INDEP ALIGN LT & RT", "BEGIN INDEP ALIGN - LT", etc.).
@@ -820,13 +816,9 @@ async function loadCountyCodeDomain() {
       }
     }
 
-    console.log('[sortWithIA] indepNoPmPfxMatch done —', indepNoPmPfxMatch.size, 'records; starting grouping loop');
     const grouped = [];
     let i = 0;
-    let _outerIter = 0;
     while (i < main.length) {
-      _outerIter++;
-      if (_outerIter % 100 === 0) console.log('[sortWithIA] outer loop iter', _outerIter, 'i=', i, 'grouped=', grouped.length);
       // Skip records already absorbed into a preceding section's tail scan.
       if (absorbedRecs.has(main[i])) { i++; continue; }
       if ((main[i].pmSuffix === 'R' || main[i].pmSuffix === 'L') && !isIABoundaryRec(main[i]) &&
@@ -999,15 +991,7 @@ async function loadCountyCodeDomain() {
             }
           }
         }
-        if (i === _iBeforeInner) {
-          const _tr = main[_iBeforeInner];
-          console.error('[sortWithIA] BUG: inner loop stuck at i=', _iBeforeInner, JSON.stringify({
-            type: _tr?.type, pmSuffix: _tr?.pmSuffix, hgValue: _tr?.hgValue,
-            county: _tr?.county, desc: (_tr?.desc ?? '').slice(0, 80), sectionCounty,
-            inAbsorbed: absorbedRecs.has(_tr)
-          }));
-          i++; // force advance to break infinite loop
-        }
+        if (i === _iBeforeInner) i++;
         const section = main.slice(j, i);
         // Post-section absorption: absorb any immediately-following IA boundary
         // records that are END markers for this alignment span. These can appear

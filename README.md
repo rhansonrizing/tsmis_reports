@@ -237,14 +237,6 @@ When eq1 and eq2 share the same AR to 3dp, the lower-AR sort tiebreak may not co
 
 **Prefix normalization:** `'.'` and `''` are treated as equivalent (no prefix) before all comparisons.
 
----
-
-## Debug Helpers
-
-`hsl_logEqNeighbors(allPairs, label)` — called automatically after `fixEqPairOrder` in both district/route and postmile modes. Prints each equation pair to the console with 3 records of context on each side. Useful for diagnosing sort order and prefix-swap decisions. Output is grouped under `[eqLog <label>] eq pair @ index N  pairId:<id>`.
-
----
-
 ## Running Locally
 
 Serve the project root with any static file server. The OAuth redirect URL in `config.js` must match. Example using VS Code Live Server:
@@ -257,6 +249,14 @@ Serve the project root with any static file server. The OAuth redirect URL in `c
 
 | File | Description |
 |---|---|
-| `index.html` | Entire application — HTML, CSS, and JavaScript |
-| `config.js` | Environment-specific configuration (not committed with credentials) |
+| `index.html` | Single HTML entry point — all markup |
+| `config.js` | ArcGIS URLs and OAuth credentials |
+| `shared.js` | Core library — auth, queries, sort pipeline, utilities |
+| `main.js` | DOMContentLoaded bootstrap |
+| `hsl.js` | Report: Highway Sequence Listing |
+| `ramp_detail.js` | Report: TSAR Ramp Detail |
+| `ramp_summary.js` | Report: TSAR Ramp Summary |
+| `highway_log.js` | Report: Highway Log |
+| `intersection_detail.js` | Report: Intersection Detail |
+| `styles.css` | All styles including print |
 | `caltranslogo.png` | Caltrans logo displayed in the header |

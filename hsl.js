@@ -620,13 +620,10 @@
       token: _token
     }).toString();
 
-    console.log('[queryEqPts]', features.length, 'calibration points, translating AR+OD');
     const [arData, odData] = await Promise.all([
       fetch(xlateUrl, { method: 'POST', headers, body: makeBody([4]) }).then(r => r.json()).catch(() => ({ locations: [] })),
       fetch(xlateUrl, { method: 'POST', headers, body: makeBody([5]) }).then(r => r.json()).catch(() => ({ locations: [] }))
     ]);
-    console.log('[queryEqPts] translate done');
-
     const segArMin = Math.min(...segments.map(s => Math.min(s.fromBest.measure, s.toBest.measure))) - 0.01;
     const segArMax = Math.max(...segments.map(s => Math.max(s.fromBest.measure, s.toBest.measure))) + 0.01;
 
@@ -1922,20 +1919,16 @@
     startThinking(btn);
     clearResults();
     try {
-      console.time('[HSL D/R] total');
-      const _t = (label, p) => { console.time(label); return p.then(r => { console.timeEnd(label); return r; }, e => { console.timeEnd(label); throw e; }); };
-      console.log('[HSL D/R] phase 1: launching 8 queries');
       const [rampPairs, { pairs: landmarkPairs, selfIntersectARs }, routeBreakPairs, { pairs: intersectionPairs, unresolved: unresolvedIntersections }, equationPairs, cityBeginPairs, countyBeginPairs, direction] = await Promise.all([
-        _t('[HSL] queryAttributeSet', queryAttributeSet(segments, district, county)),
-        _t('[HSL] queryLandmarks', queryLandmarks(segments, routeSuffix, district, county)),
-        _t('[HSL] queryRouteBreaks', queryRouteBreaks(segments, routeSuffix, district, county)),
-        _t('[HSL] queryIntersections', queryIntersections(segments, routeNum, district, county)),
-        _t('[HSL] queryEquationPoints', queryEquationPointsFromNetwork(segments, paddedRoute, district, county)),
-        _t('[HSL] queryCityBegins', queryCityBegins(segments, paddedRoute, district, county)),
-        _t('[HSL] queryCountyBegins', queryCountyBegins(segments, paddedRoute, district, county)),
-        _t('[HSL] queryRouteDirection', queryRouteDirection(routeNum))
+        queryAttributeSet(segments, district, county),
+        queryLandmarks(segments, routeSuffix, district, county),
+        queryRouteBreaks(segments, routeSuffix, district, county),
+        queryIntersections(segments, routeNum, district, county),
+        queryEquationPointsFromNetwork(segments, paddedRoute, district, county),
+        queryCityBegins(segments, paddedRoute, district, county),
+        queryCountyBegins(segments, paddedRoute, district, county),
+        queryRouteDirection(routeNum)
       ]);
-      console.log('[HSL D/R] phase 1 done — ramps:', rampPairs.length, 'landmarks:', landmarkPairs.length, 'routeBreaks:', routeBreakPairs.length, 'intersections:', intersectionPairs.length, 'equations:', equationPairs.length, 'cityBegins:', cityBeginPairs.length, 'countyBegins:', countyBeginPairs.length);
       _routeLabel    = paddedRoute;
       _directionFrom = direction.from;
       _directionTo   = direction.to;
@@ -1981,20 +1974,9 @@
           unsortedPairs.splice(0, unsortedPairs.length, ...unsortedPairs.filter(p => p.type !== 'equation' || !siPairIds.has(p.eqPairId)));
       }
       hsl_fixCountyLineLandmarks(unsortedPairs);
-      console.log('[HSL D/R] phase 2: HG pre-fetch for', unsortedPairs.length, 'pairs');
       const hgMap = await queryRangeLayer(unsortedPairs, 116, 'Highway_Group');
       for (const p of unsortedPairs) p.hgValue = hgMap.get(p.name) ?? '';
-      const _typeCounts = unsortedPairs.reduce((m, p) => { m[p.type] = (m[p.type] ?? 0) + 1; return m; }, {});
-      console.log('[HSL D/R] phase 2 done, phase 3: sort pipeline,', unsortedPairs.length, 'pairs', JSON.stringify(_typeCounts));
-      console.log('[HSL D/R] sortWithIndependentAlignments start');
-      const _sorted = sortWithIndependentAlignments(unsortedPairs);
-      console.log('[HSL D/R] sortWithIA done —', _sorted.length, 'pairs; filterCityBoundaries start');
-      const _filtered1 = hsl_filterCityBoundaries(_sorted);
-      console.log('[HSL D/R] filterCityBoundaries done —', _filtered1.length, '; filterRealignmentLandmarks start');
-      const _filtered2 = hsl_filterRealignmentLandmarks(_filtered1);
-      console.log('[HSL D/R] filterRealignmentLandmarks done —', _filtered2.length, '; fixEqPairOrder start');
-      const allPairs = fixEqPairOrder(_filtered2);
-      console.log('[HSL D/R] phase 3 done —', allPairs.length, 'pairs after sort/filter');
+      const allPairs = fixEqPairOrder(hsl_filterRealignmentLandmarks(hsl_filterCityBoundaries(sortWithIndependentAlignments(unsortedPairs))));
       if (allPairs.length === 0) { hsl_showRampResults('none'); return; }
       // When county=ALL, a mid-route county transition shows both COUNTY END and
       // COUNTY BEGIN at the same AR. The END alone is sufficient — drop the BEGIN.
@@ -2038,9 +2020,7 @@
         }
       }
       const updatedLastPair = allPairs[allPairs.length - 1];
-      console.log('[HSL D/R] phase 4: queryEndRecord (last pair:', updatedLastPair?.type, updatedLastPair?.desc, ')');
       const endPair = (updatedLastPair?.type === 'cityend' || updatedLastPair?.type === 'citybegin' || updatedLastPair?.type === 'countyend' || updatedLastPair?.type === 'countybegin') ? null : await hsl_queryEndRecord(segments, district, county, paddedRoute);
-      console.log('[HSL D/R] endPair:', endPair?.desc ?? 'null (skipped)');
       if (endPair) {
         const pmKey = p => `${p.pmPrefix}|${parseFloat(p.pmMeasure).toFixed(3)}|${p.pmSuffix}`;
         // End of county/route takes precedence over any END/BEGIN REALIGNMENT at the same PM.
@@ -2074,9 +2054,7 @@
           allPairs.splice(insertIdx, 0, endPair);
         }
       }
-      console.log('[HSL D/R] phase 4: queryBeginRecord');
       const beginPair = await hsl_queryBeginRecord(segments, district, county, paddedRoute);
-      console.log('[HSL D/R] beginPair:', beginPair?.desc ?? 'null');
       if (beginPair) {
         const pmKey = p => `${p.pmPrefix}|${parseFloat(p.pmMeasure).toFixed(3)}|${p.pmSuffix}`;
         const bVal = parseFloat(beginPair.pmMeasure);
@@ -2096,13 +2074,10 @@
       allPairs.splice(0, allPairs.length, ...hsl_applySyntheticHierarchy(allPairs));
       hsl_applyRouteBreakEquations(allPairs);
       { const ei = allPairs.findIndex(p => p.name?.startsWith('hsl_end_')); if (ei >= 0 && ei < allPairs.length - 1) allPairs.push(allPairs.splice(ei, 1)[0]); }
-      console.log('[HSL D/R] phase 6: queryRampDescriptions for', allPairs.length, 'pairs');
       await hsl_queryRampDescriptions(allPairs, unresolvedIntersections, hgMap, cityPairsForLookup);
-      console.log('[HSL D/R] complete');
     } catch (err) {
       hsl_showRampResults('error', err.message || 'An error occurred.');
     } finally {
-      console.timeEnd('[HSL D/R] total');
       btn.disabled = false;
       stopThinking(btn);
     }
