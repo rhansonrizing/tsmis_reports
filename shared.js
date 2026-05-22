@@ -518,41 +518,517 @@ async function loadCountyCodeDomain() {
   // ── Input population & validation ─────────────────────────────────────────
 
   function populateCounties() {
-    ['from-county', 'to-county'].forEach(id => {
-      const sel = document.getElementById(id);
-      const placeholder = document.createElement('option');
-      placeholder.value       = '';
-      placeholder.textContent = '-- Select County --';
-      placeholder.disabled    = true;
-      placeholder.hidden      = true;
-      placeholder.selected    = true;
-      sel.appendChild(placeholder);
-      COUNTY_CODES.forEach(({value, display}) => {
-        const opt = document.createElement('option');
-        opt.value       = value;
-        opt.textContent = display;
-        sel.appendChild(opt);
-      });
+    const sel = document.getElementById('from-county');
+    const placeholder = document.createElement('option');
+    placeholder.value       = '';
+    placeholder.textContent = '-- Select County --';
+    placeholder.disabled    = true;
+    placeholder.hidden      = true;
+    placeholder.selected    = true;
+    sel.appendChild(placeholder);
+    COUNTY_CODES.forEach(({value, display}) => {
+      const opt = document.createElement('option');
+      opt.value       = value;
+      opt.textContent = display;
+      sel.appendChild(opt);
     });
   }
 
+  async function populateToCountySelect(routeNum, routeSuffix) {
+    const toCountySel = document.getElementById('to-county');
+    toCountySel.innerHTML = '<option value="" disabled hidden selected>-- Loading... --</option>';
+    toCountySel.disabled = true;
+    checkTranslateReady();
+
+    const paddedRoute = routeNum.padStart(3, '0');
+    const sfxChar = routeSuffix === '.' ? '' : routeSuffix;
+    const params = new URLSearchParams({
+      where:                `RouteID LIKE 'SHS_${paddedRoute}${sfxChar}%'`,
+      outFields:            'County_Code',
+      returnDistinctValues: 'true',
+      returnGeometry:       'false',
+      orderByFields:        'County_Code ASC',
+      ...versionParam(),
+      f:                    'json',
+      token:                _token
+    });
+    let data;
+    try {
+      const resp = await fetch(`${CONFIG.featureServiceUrl}/85/query?${params}`);
+      data = await resp.json();
+    } catch (e) {
+      toCountySel.innerHTML = '<option value="" disabled hidden selected>-- Error loading counties --</option>';
+      return;
+    }
+    if (data.error) {
+      const code = data.error.code;
+      if (code === 498 || code === 499) { _token = null; login(); return; }
+      toCountySel.innerHTML = '<option value="" disabled hidden selected>-- Error loading counties --</option>';
+      return;
+    }
+    if (!Array.isArray(data.features) || data.features.length === 0) {
+      toCountySel.innerHTML = '<option value="" disabled hidden selected>-- No counties found --</option>';
+      return;
+    }
+
+    const seen = new Set();
+    for (const f of data.features) {
+      const code = f.attributes?.County_Code;
+      if (code) seen.add(code);
+    }
+    const matches = COUNTY_CODES.filter(c => seen.has(c.value.replace(/\.$/, '')));
+
+    toCountySel.innerHTML = '';
+    if (matches.length === 0) {
+      toCountySel.innerHTML = '<option value="" disabled hidden selected>-- No counties found --</option>';
+      return;
+    }
+    if (matches.length > 1) {
+      const ph = document.createElement('option');
+      ph.value = ''; ph.textContent = '-- Select County --'; ph.disabled = true; ph.hidden = true; ph.selected = true;
+      toCountySel.appendChild(ph);
+    }
+    for (const { value, display } of matches) {
+      const opt = document.createElement('option');
+      opt.value = value; opt.textContent = display;
+      toCountySel.appendChild(opt);
+    }
+    toCountySel.disabled = false;
+    if (matches.length === 1) {
+      toCountySel.value = matches[0].value;
+      toCountySel.classList.add('has-value');
+    }
+    checkTranslateReady();
+  }
+
+  async function populateRouteSelect(countyCode, selId) {
+    const routeSel = document.getElementById(selId);
+    routeSel.innerHTML = '<option value="" disabled hidden selected>-- Loading... --</option>';
+    routeSel.disabled = true;
+    checkTranslateReady();
+
+    const layer85Code  = countyCode.replace(/\.$/, '');
+    const countyFilter = layer85Code ? ` AND County_Code = '${layer85Code.replace(/'/g, "''")}'` : '';
+    const params = new URLSearchParams({
+      where:                `RouteID LIKE 'SHS%'${countyFilter}`,
+      outFields:            'RouteID',
+      returnDistinctValues: 'true',
+      returnGeometry:       'false',
+      orderByFields:        'RouteID ASC',
+      ...versionParam(),
+      f:                    'json',
+      token:                _token
+    });
+    let data;
+    try {
+      const resp = await fetch(`${CONFIG.featureServiceUrl}/85/query?${params}`);
+      data = await resp.json();
+    } catch (e) {
+      routeSel.innerHTML = '<option value="" disabled hidden selected>-- Error loading routes --</option>';
+      return;
+    }
+    if (data.error) {
+      const code = data.error.code;
+      if (code === 498 || code === 499) { _token = null; login(); return; }
+      routeSel.innerHTML = '<option value="" disabled hidden selected>-- Error loading routes --</option>';
+      return;
+    }
+    if (!Array.isArray(data.features) || data.features.length === 0) {
+      routeSel.innerHTML = '<option value="" disabled hidden selected>-- No routes found --</option>';
+      return;
+    }
+
+    const seen = new Set();
+    const routes = [];
+    for (const f of data.features) {
+      const rid = f.attributes?.RouteID;
+      if (!rid) continue;
+      const m = rid.match(/^SHS_(\d+)([A-Z.]?)_P$/);
+      if (!m) continue;
+      const numStr = m[1];
+      const sfx    = m[2];
+      const hasSfx = sfx && sfx !== '.';
+      const value  = hasSfx ? numStr + sfx : numStr;
+      const num    = parseInt(numStr, 10);
+      if (!seen.has(value)) { seen.add(value); routes.push({ value, num }); }
+    }
+    routes.sort((a, b) => a.num - b.num || a.value.localeCompare(b.value));
+
+    routeSel.innerHTML = '<option value="" disabled hidden selected>-- Select Route --</option>';
+    for (const { value } of routes) {
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = value;
+      routeSel.appendChild(opt);
+    }
+    routeSel.disabled = false;
+    checkTranslateReady();
+  }
+
+  async function populatePmPrefixSelect(county, routeNum, routeSuffix) {
+    const pfxSel = document.getElementById('from-pmPrefix');
+    const sfxSel = document.getElementById('from-pmSuffix');
+    pfxSel.innerHTML = '<option value="" disabled hidden selected>-- Loading... --</option>';
+    pfxSel.disabled  = true;
+    sfxSel.innerHTML = '<option value="" disabled hidden selected>-- Select Prefix First --</option>';
+    sfxSel.disabled  = true;
+    checkTranslateReady();
+
+    const routePrefix = county + routeNum.padStart(3, '0') + routeSuffix;
+    const params = new URLSearchParams({
+      where:          `RouteId LIKE '${routePrefix.replace(/'/g, "''")}%'`,
+      outFields:      'RouteId',
+      returnGeometry: 'false',
+      ...versionParam(),
+      f:              'json',
+      token:          _token
+    });
+    let data;
+    try {
+      const resp = await fetch(`${CONFIG.mapServiceUrl}/3/query?${params}`);
+      data = await resp.json();
+    } catch (e) {
+      pfxSel.innerHTML = '<option value="" disabled hidden selected>-- Error loading prefixes --</option>';
+      return;
+    }
+    if (data.error) {
+      const code = data.error.code;
+      if (code === 498 || code === 499) { _token = null; login(); return; }
+      pfxSel.innerHTML = '<option value="" disabled hidden selected>-- Error loading prefixes --</option>';
+      return;
+    }
+    if (!Array.isArray(data.features) || data.features.length === 0) {
+      pfxSel.innerHTML = '<option value="" disabled hidden selected>-- No prefixes found --</option>';
+      return;
+    }
+
+    const pfxOffset = routePrefix.length;
+    const seen = new Set();
+    for (const f of data.features) {
+      const rid = f.attributes?.RouteId;
+      if (!rid || rid.length <= pfxOffset) continue;
+      seen.add(rid[pfxOffset]);
+    }
+    const ORDER = ['.', 'C', 'D', 'G', 'H', 'L', 'M', 'N', 'R', 'S', 'T'];
+    const pfxList = ORDER.filter(p => seen.has(p));
+
+    pfxSel.innerHTML = '';
+    if (pfxList.length === 0) {
+      pfxSel.innerHTML = '<option value="" disabled hidden selected>-- No prefixes found --</option>';
+      return;
+    }
+    if (pfxList.length > 1) {
+      const ph = document.createElement('option');
+      ph.value = ''; ph.textContent = '-- Select Prefix --'; ph.disabled = true; ph.hidden = true; ph.selected = true;
+      pfxSel.appendChild(ph);
+    }
+    for (const p of pfxList) {
+      const opt = document.createElement('option');
+      opt.value = p; opt.textContent = p;
+      pfxSel.appendChild(opt);
+    }
+    pfxSel.disabled = false;
+    if (pfxList.length === 1) {
+      pfxSel.value = pfxList[0];
+      await populatePmSuffixSelect(county, routeNum, routeSuffix, pfxList[0]);
+    }
+    checkTranslateReady();
+  }
+
+  async function populatePmSuffixSelect(county, routeNum, routeSuffix, pmPrefix) {
+    const sfxSel = document.getElementById('from-pmSuffix');
+    sfxSel.innerHTML = '<option value="" disabled hidden selected>-- Loading... --</option>';
+    sfxSel.disabled  = true;
+    checkTranslateReady();
+
+    const routePrefix = county + routeNum.padStart(3, '0') + routeSuffix + pmPrefix;
+    const params = new URLSearchParams({
+      where:          `RouteId LIKE '${routePrefix.replace(/'/g, "''")}%'`,
+      outFields:      'PMSuffix',
+      returnGeometry: 'false',
+      ...versionParam(),
+      f:              'json',
+      token:          _token
+    });
+    let data;
+    try {
+      const resp = await fetch(`${CONFIG.mapServiceUrl}/3/query?${params}`);
+      data = await resp.json();
+    } catch (e) {
+      sfxSel.innerHTML = '<option value="" disabled hidden selected>-- Error loading suffixes --</option>';
+      return;
+    }
+    if (data.error) {
+      const code = data.error.code;
+      if (code === 498 || code === 499) { _token = null; login(); return; }
+      sfxSel.innerHTML = '<option value="" disabled hidden selected>-- Error loading suffixes --</option>';
+      return;
+    }
+    if (!Array.isArray(data.features) || data.features.length === 0) {
+      sfxSel.innerHTML = '<option value="" disabled hidden selected>-- No suffixes found --</option>';
+      return;
+    }
+
+    const seen = new Set();
+    for (const f of data.features) {
+      const sfx = f.attributes?.PMSuffix;
+      seen.add(sfx && sfx !== '' ? sfx : '.');
+    }
+    const ORDER = ['.', 'R', 'L'];
+    const sfxList = ORDER.filter(s => seen.has(s));
+
+    sfxSel.innerHTML = '';
+    if (sfxList.length === 0) {
+      sfxSel.innerHTML = '<option value="" disabled hidden selected>-- No suffixes found --</option>';
+      return;
+    }
+    if (sfxList.length > 1) {
+      const ph = document.createElement('option');
+      ph.value = ''; ph.textContent = '-- Select Suffix --'; ph.disabled = true; ph.hidden = true; ph.selected = true;
+      sfxSel.appendChild(ph);
+    }
+    for (const s of sfxList) {
+      const opt = document.createElement('option');
+      opt.value = s; opt.textContent = s;
+      sfxSel.appendChild(opt);
+    }
+    sfxSel.disabled = false;
+    if (sfxList.length === 1) sfxSel.value = sfxList[0];
+    checkTranslateReady();
+  }
+
+  function onFromPmPrefixChange() {
+    const county    = document.getElementById('from-county').value;
+    const routeRaw  = document.getElementById('from-routeNum').value;
+    const sfxMatch  = routeRaw.match(/^(\d+)([A-Z])$/);
+    const routeNum  = sfxMatch ? sfxMatch[1] : routeRaw;
+    const routeSuffix = sfxMatch ? sfxMatch[2] : '.';
+    const pmPrefix  = document.getElementById('from-pmPrefix').value;
+    populatePmSuffixSelect(county, routeNum, routeSuffix, pmPrefix);
+  }
+
+  async function populateToPmPrefixSelect(county, routeNum, routeSuffix) {
+    const pfxSel = document.getElementById('to-pmPrefix');
+    const sfxSel = document.getElementById('to-pmSuffix');
+    pfxSel.innerHTML = '<option value="" disabled hidden selected>-- Loading... --</option>';
+    pfxSel.disabled  = true;
+    sfxSel.innerHTML = '<option value="" disabled hidden selected>-- Select Prefix First --</option>';
+    sfxSel.disabled  = true;
+    checkTranslateReady();
+
+    const routePrefix = county + routeNum.padStart(3, '0') + routeSuffix;
+    const params = new URLSearchParams({
+      where:          `RouteId LIKE '${routePrefix.replace(/'/g, "''")}%'`,
+      outFields:      'RouteId',
+      returnGeometry: 'false',
+      ...versionParam(),
+      f:              'json',
+      token:          _token
+    });
+    let data;
+    try {
+      const resp = await fetch(`${CONFIG.mapServiceUrl}/3/query?${params}`);
+      data = await resp.json();
+    } catch (e) {
+      pfxSel.innerHTML = '<option value="" disabled hidden selected>-- Error loading prefixes --</option>';
+      return;
+    }
+    if (data.error) {
+      const code = data.error.code;
+      if (code === 498 || code === 499) { _token = null; login(); return; }
+      pfxSel.innerHTML = '<option value="" disabled hidden selected>-- Error loading prefixes --</option>';
+      return;
+    }
+    if (!Array.isArray(data.features) || data.features.length === 0) {
+      pfxSel.innerHTML = '<option value="" disabled hidden selected>-- No prefixes found --</option>';
+      return;
+    }
+
+    const pfxOffset = routePrefix.length;
+    const seen = new Set();
+    for (const f of data.features) {
+      const rid = f.attributes?.RouteId;
+      if (!rid || rid.length <= pfxOffset) continue;
+      seen.add(rid[pfxOffset]);
+    }
+    const ORDER = ['.', 'C', 'D', 'G', 'H', 'L', 'M', 'N', 'R', 'S', 'T'];
+    const pfxList = ORDER.filter(p => seen.has(p));
+
+    pfxSel.innerHTML = '';
+    if (pfxList.length === 0) {
+      pfxSel.innerHTML = '<option value="" disabled hidden selected>-- No prefixes found --</option>';
+      return;
+    }
+    if (pfxList.length > 1) {
+      const ph = document.createElement('option');
+      ph.value = ''; ph.textContent = '-- Select Prefix --'; ph.disabled = true; ph.hidden = true; ph.selected = true;
+      pfxSel.appendChild(ph);
+    }
+    for (const p of pfxList) {
+      const opt = document.createElement('option');
+      opt.value = p; opt.textContent = p;
+      pfxSel.appendChild(opt);
+    }
+    pfxSel.disabled = false;
+    if (pfxList.length === 1) {
+      pfxSel.value = pfxList[0];
+      await populateToPmSuffixSelect(county, routeNum, routeSuffix, pfxList[0]);
+    }
+    checkTranslateReady();
+  }
+
+  async function populateToPmSuffixSelect(county, routeNum, routeSuffix, pmPrefix) {
+    const sfxSel = document.getElementById('to-pmSuffix');
+    sfxSel.innerHTML = '<option value="" disabled hidden selected>-- Loading... --</option>';
+    sfxSel.disabled  = true;
+    checkTranslateReady();
+
+    const routePrefix = county + routeNum.padStart(3, '0') + routeSuffix + pmPrefix;
+    const params = new URLSearchParams({
+      where:          `RouteId LIKE '${routePrefix.replace(/'/g, "''")}%'`,
+      outFields:      'PMSuffix',
+      returnGeometry: 'false',
+      ...versionParam(),
+      f:              'json',
+      token:          _token
+    });
+    let data;
+    try {
+      const resp = await fetch(`${CONFIG.mapServiceUrl}/3/query?${params}`);
+      data = await resp.json();
+    } catch (e) {
+      sfxSel.innerHTML = '<option value="" disabled hidden selected>-- Error loading suffixes --</option>';
+      return;
+    }
+    if (data.error) {
+      const code = data.error.code;
+      if (code === 498 || code === 499) { _token = null; login(); return; }
+      sfxSel.innerHTML = '<option value="" disabled hidden selected>-- Error loading suffixes --</option>';
+      return;
+    }
+    if (!Array.isArray(data.features) || data.features.length === 0) {
+      sfxSel.innerHTML = '<option value="" disabled hidden selected>-- No suffixes found --</option>';
+      return;
+    }
+
+    const seen = new Set();
+    for (const f of data.features) {
+      const sfx = f.attributes?.PMSuffix;
+      seen.add(sfx && sfx !== '' ? sfx : '.');
+    }
+    const ORDER = ['.', 'R', 'L'];
+    const sfxList = ORDER.filter(s => seen.has(s));
+
+    sfxSel.innerHTML = '';
+    if (sfxList.length === 0) {
+      sfxSel.innerHTML = '<option value="" disabled hidden selected>-- No suffixes found --</option>';
+      return;
+    }
+    if (sfxList.length > 1) {
+      const ph = document.createElement('option');
+      ph.value = ''; ph.textContent = '-- Select Suffix --'; ph.disabled = true; ph.hidden = true; ph.selected = true;
+      sfxSel.appendChild(ph);
+    }
+    for (const s of sfxList) {
+      const opt = document.createElement('option');
+      opt.value = s; opt.textContent = s;
+      sfxSel.appendChild(opt);
+    }
+    sfxSel.disabled = false;
+    if (sfxList.length === 1) sfxSel.value = sfxList[0];
+    checkTranslateReady();
+  }
+
+  function onToPmPrefixChange() {
+    const county    = document.getElementById('to-county').value;
+    const routeRaw  = document.getElementById('to-routeNum').value;
+    const sfxMatch  = routeRaw.match(/^(\d+)([A-Z])$/);
+    const routeNum  = sfxMatch ? sfxMatch[1] : routeRaw;
+    const routeSuffix = sfxMatch ? sfxMatch[2] : '.';
+    const pmPrefix  = document.getElementById('to-pmPrefix').value;
+    populateToPmSuffixSelect(county, routeNum, routeSuffix, pmPrefix);
+  }
+
+  function onFromCountyChange() {
+    const sel = document.getElementById('from-county');
+    sel.classList.toggle('has-value', !!sel.value);
+    const routeSel = document.getElementById('from-routeNum');
+    routeSel.innerHTML = '<option value="" disabled hidden selected>-- Select Route --</option>';
+    routeSel.disabled = true;
+    const toRouteSel = document.getElementById('to-routeNum');
+    toRouteSel.innerHTML = '<option value="" disabled hidden selected>-- Select Route --</option>';
+    const toCountySel = document.getElementById('to-county');
+    toCountySel.innerHTML = '<option value="" disabled hidden selected>-- Select Route First --</option>';
+    toCountySel.disabled = true;
+    toCountySel.classList.remove('has-value');
+    const toPfxSel = document.getElementById('to-pmPrefix');
+    toPfxSel.innerHTML = '<option value="" disabled hidden selected>-- Select County First --</option>';
+    toPfxSel.disabled = true;
+    const toSfxSel = document.getElementById('to-pmSuffix');
+    toSfxSel.innerHTML = '<option value="" disabled hidden selected>-- Select Prefix First --</option>';
+    toSfxSel.disabled = true;
+    const pfxSel = document.getElementById('from-pmPrefix');
+    pfxSel.innerHTML = '<option value="" disabled hidden selected>-- Select Route First --</option>';
+    pfxSel.disabled = true;
+    const sfxSel = document.getElementById('from-pmSuffix');
+    sfxSel.innerHTML = '<option value="" disabled hidden selected>-- Select Prefix First --</option>';
+    sfxSel.disabled = true;
+    checkTranslateReady();
+    if (!sel.value) return;
+    populateRouteSelect(sel.value, 'from-routeNum');
+  }
+
+  function onFromRouteChange() {
+    const fromRoute = document.getElementById('from-routeNum').value;
+    const toRouteSel = document.getElementById('to-routeNum');
+    toRouteSel.innerHTML = '';
+    const opt = document.createElement('option');
+    opt.value = fromRoute; opt.textContent = fromRoute; opt.selected = true;
+    toRouteSel.appendChild(opt);
+    const toCountySel = document.getElementById('to-county');
+    toCountySel.innerHTML = '<option value="" disabled hidden selected>-- Select Route First --</option>';
+    toCountySel.disabled = true;
+    toCountySel.classList.remove('has-value');
+    const toPfxSel = document.getElementById('to-pmPrefix');
+    toPfxSel.innerHTML = '<option value="" disabled hidden selected>-- Select County First --</option>';
+    toPfxSel.disabled = true;
+    const toSfxSel = document.getElementById('to-pmSuffix');
+    toSfxSel.innerHTML = '<option value="" disabled hidden selected>-- Select Prefix First --</option>';
+    toSfxSel.disabled = true;
+    const pfxSel = document.getElementById('from-pmPrefix');
+    pfxSel.innerHTML = '<option value="" disabled hidden selected>-- Select Route First --</option>';
+    pfxSel.disabled = true;
+    const sfxSel = document.getElementById('from-pmSuffix');
+    sfxSel.innerHTML = '<option value="" disabled hidden selected>-- Select Prefix First --</option>';
+    sfxSel.disabled = true;
+    checkTranslateReady();
+    const county      = document.getElementById('from-county').value;
+    const sfxMatch    = fromRoute.match(/^(\d+)([A-Z])$/);
+    const routeNum    = sfxMatch ? sfxMatch[1] : fromRoute;
+    const routeSuffix = sfxMatch ? sfxMatch[2] : '.';
+    populatePmPrefixSelect(county, routeNum, routeSuffix);
+    populateToCountySelect(routeNum, routeSuffix);
+  }
+
+  function onToCountyChange() {
+    const sel = document.getElementById('to-county');
+    sel.classList.toggle('has-value', !!sel.value);
+    const pfxSel = document.getElementById('to-pmPrefix');
+    pfxSel.innerHTML = '<option value="" disabled hidden selected>-- Select County First --</option>';
+    pfxSel.disabled = true;
+    const sfxSel = document.getElementById('to-pmSuffix');
+    sfxSel.innerHTML = '<option value="" disabled hidden selected>-- Select Prefix First --</option>';
+    sfxSel.disabled = true;
+    checkTranslateReady();
+    if (!sel.value) return;
+    const routeRaw    = document.getElementById('to-routeNum').value;
+    const sfxMatch    = routeRaw.match(/^(\d+)([A-Z])$/);
+    const routeNum    = sfxMatch ? sfxMatch[1] : routeRaw;
+    const routeSuffix = sfxMatch ? sfxMatch[2] : '.';
+    populateToPmPrefixSelect(sel.value, routeNum, routeSuffix);
+  }
+
   function setupValidation() {
-    ['from-routeNum', 'to-routeNum'].forEach(id => {
-      const el = document.getElementById(id);
-      el.addEventListener('input', () => {
-        el.value = el.value.replace(/\D/g, '').slice(0, 3);
-      });
-    });
-
-    // Mirror From route # into To route # while To hasn't been manually changed
-    const fromRouteEl = document.getElementById('from-routeNum');
-    const toRouteEl   = document.getElementById('to-routeNum');
-    let toRouteEdited = false;
-    toRouteEl.addEventListener('input', () => { toRouteEdited = true; });
-    fromRouteEl.addEventListener('input', () => {
-      if (!toRouteEdited) toRouteEl.value = fromRouteEl.value;
-    });
-
     ['from-measure', 'to-measure'].forEach(id => {
       const el = document.getElementById(id);
       el.addEventListener('input', () => {
@@ -570,10 +1046,12 @@ async function loadCountyCodeDomain() {
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   function readSection(prefix) {
+    const routeRaw = document.getElementById(`${prefix}-routeNum`).value;
+    const sfxMatch = routeRaw.match(/^(\d+)([A-Z])$/);
     return {
       county:      document.getElementById(`${prefix}-county`).value,
-      routeNum:    document.getElementById(`${prefix}-routeNum`).value.trim(),
-      routeSuffix: document.getElementById(`${prefix}-routeSuffix`).value,
+      routeNum:    sfxMatch ? sfxMatch[1] : routeRaw,
+      routeSuffix: sfxMatch ? sfxMatch[2] : '.',
       pmPrefix:    document.getElementById(`${prefix}-pmPrefix`).value,
       pmSuffix:    document.getElementById(`${prefix}-pmSuffix`).value,
       measureRaw:  document.getElementById(`${prefix}-measure`).value.trim(),
@@ -1194,11 +1672,15 @@ async function loadCountyCodeDomain() {
       document.getElementById(id).classList.toggle('has-value', !!document.getElementById(id).value);
     });
     const ready =
-      document.getElementById('from-county').value   &&
+      document.getElementById('from-county').value        &&
       document.getElementById('from-routeNum').value.trim() &&
-      document.getElementById('from-measure').value.trim()  &&
-      document.getElementById('to-county').value     &&
-      document.getElementById('to-routeNum').value.trim()   &&
+      document.getElementById('from-pmPrefix').value      &&
+      document.getElementById('from-pmSuffix').value      &&
+      document.getElementById('from-measure').value.trim() &&
+      document.getElementById('to-county').value          &&
+      document.getElementById('to-routeNum').value.trim() &&
+      document.getElementById('to-pmPrefix').value        &&
+      document.getElementById('to-pmSuffix').value        &&
       document.getElementById('to-measure').value.trim();
     document.getElementById('translateBtn').disabled = !ready;
   }

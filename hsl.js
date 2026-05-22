@@ -2208,9 +2208,11 @@
           }
         }
       }
+      const segMinAR = Math.min(...segments.map(s => parseFloat(s.fromBest.measure)));
+      const segMaxAR = Math.max(...segments.map(s => parseFloat(s.toBest.measure)));
       const lastPair = allPairs[allPairs.length - 1];
       const endPair = (lastPair?.type === 'cityend' || lastPair?.type === 'citybegin' || lastPair?.type === 'countyend' || lastPair?.type === 'countybegin') ? null : await hsl_queryEndRecord(segments, null, null, paddedRouteNum);
-      if (endPair) {
+      if (endPair && Math.abs(parseFloat(endPair.arMeasure) - segMaxAR) <= 0.1) {
         const pmKey = p => `${p.pmPrefix}|${parseFloat(p.pmMeasure).toFixed(3)}|${p.pmSuffix}`;
         // End of county/route takes precedence over any END/BEGIN REALIGNMENT at the same PM.
         if (endPair.pmMeasure && !isNaN(parseFloat(endPair.pmMeasure))) {
@@ -2241,7 +2243,7 @@
         }
       }
       const beginPair = await hsl_queryBeginRecord(segments, null, null, paddedRouteNum);
-      if (beginPair) {
+      if (beginPair && Math.abs(parseFloat(beginPair.arMeasure) - segMinAR) <= 0.1) {
         const bVal = parseFloat(beginPair.pmMeasure);
         const nearDuplicate = !isNaN(bVal) && allPairs.some(p => {
           if (p.type === 'intersection' || p.type === 'ramp') return false;

@@ -148,42 +148,24 @@
       <div class="fields-row">
         <div class="field">
           <label for="from-county">County</label>
-          <select id="from-county" onchange="checkTranslateReady()"></select>
+          <select id="from-county" onchange="onFromCountyChange()"></select>
         </div>
         <div class="field">
           <label for="from-routeNum">Route #</label>
-          <input type="text" id="from-routeNum" placeholder="e.g. 008" autocomplete="off" oninput="checkTranslateReady()">
-        </div>
-        <div class="field">
-          <label for="from-routeSuffix">Rt Suffix</label>
-          <select id="from-routeSuffix">
-            <option value=".">.</option>
-            <option value="S">S</option>
-            <option value="U">U</option>
+          <select id="from-routeNum" onchange="onFromRouteChange()" disabled>
+            <option value="" disabled hidden selected>-- Select Route --</option>
           </select>
         </div>
         <div class="field">
           <label for="from-pmPrefix">PM Prefix</label>
-          <select id="from-pmPrefix">
-            <option value=".">.</option>
-            <option value="C">C</option>
-            <option value="D">D</option>
-            <option value="G">G</option>
-            <option value="H">H</option>
-            <option value="L">L</option>
-            <option value="M">M</option>
-            <option value="N">N</option>
-            <option value="R">R</option>
-            <option value="S">S</option>
-            <option value="T">T</option>
+          <select id="from-pmPrefix" onchange="onFromPmPrefixChange()" disabled>
+            <option value="" disabled hidden selected>-- Select Route First --</option>
           </select>
         </div>
         <div class="field">
           <label for="from-pmSuffix">PM Suffix</label>
-          <select id="from-pmSuffix">
-            <option value=".">.</option>
-            <option value="R">R</option>
-            <option value="L">L</option>
+          <select id="from-pmSuffix" disabled>
+            <option value="" disabled hidden selected>-- Select Prefix First --</option>
           </select>
         </div>
         <div class="field">
@@ -200,42 +182,26 @@
       <div class="fields-row">
         <div class="field">
           <label for="to-county">County</label>
-          <select id="to-county" onchange="checkTranslateReady()"></select>
+          <select id="to-county" onchange="onToCountyChange()" disabled>
+            <option value="" disabled hidden selected>-- Select Route First --</option>
+          </select>
         </div>
         <div class="field">
           <label for="to-routeNum">Route #</label>
-          <input type="text" id="to-routeNum" placeholder="e.g. 008" autocomplete="off" oninput="checkTranslateReady()">
-        </div>
-        <div class="field">
-          <label for="to-routeSuffix">Rt Suffix</label>
-          <select id="to-routeSuffix">
-            <option value=".">.</option>
-            <option value="S">S</option>
-            <option value="U">U</option>
+          <select id="to-routeNum" disabled>
+            <option value="" disabled hidden selected>-- Select Route --</option>
           </select>
         </div>
         <div class="field">
           <label for="to-pmPrefix">PM Prefix</label>
-          <select id="to-pmPrefix">
-            <option value=".">.</option>
-            <option value="C">C</option>
-            <option value="D">D</option>
-            <option value="G">G</option>
-            <option value="H">H</option>
-            <option value="L">L</option>
-            <option value="M">M</option>
-            <option value="N">N</option>
-            <option value="R">R</option>
-            <option value="S">S</option>
-            <option value="T">T</option>
+          <select id="to-pmPrefix" onchange="onToPmPrefixChange()" disabled>
+            <option value="" disabled hidden selected>-- Select County First --</option>
           </select>
         </div>
         <div class="field">
           <label for="to-pmSuffix">PM Suffix</label>
-          <select id="to-pmSuffix">
-            <option value=".">.</option>
-            <option value="R">R</option>
-            <option value="L">L</option>
+          <select id="to-pmSuffix" disabled>
+            <option value="" disabled hidden selected>-- Select Prefix First --</option>
           </select>
         </div>
         <div class="field">

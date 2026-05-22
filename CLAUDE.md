@@ -64,7 +64,7 @@ For local dev: change `oauthRedirectUrl` to `http://localhost:5500/index.html`.
 | 1 | Calibration Points | Point Events | RouteId, Measure, NetworkId | Equation point detection (NetworkId=2, right-alignment only); also used by `hsl_queryEndRecord` for PM endpoint lookup |
 | 3 | PM Calibration Routes | Route Geometry (M-aware) | RouteId, PMSuffix, County | PM-network geometry; translate source for PM→AR/OD |
 | 74 | City Code | Range Events | City_Code, FromARMeasure, ToARMeasure, BeginPMSuffix/EndPMSuffix | City code by AR range; queried in `queryCityBegins` for HSL and `queryRangeLayer` for all reports |
-| 85 | County Code | Range Events | County_Code, FromARMeasure, ToARMeasure, District | County ranges on route; used in `onDistrictChange` (dropdown population), `queryCountyBegins`, `hsl_queryEndRecord`, `hsl_queryBeginRecord`. **Note:** stores 2-char codes without trailing period (e.g. `SJ`, not `SJ.`) — use `countyCodeMatches()` to compare |
+| 85 | County Code | Range Events | County_Code, FromARMeasure, ToARMeasure, District | County ranges on route; used in `onDistrictChange` (dropdown population), `populateRouteSelect` (postmile route dropdown), `populateToCountySelect` (postmile to-county dropdown), `queryCountyBegins`, `hsl_queryEndRecord`, `hsl_queryBeginRecord`. **Note:** stores 2-char codes without trailing period (e.g. `SJ`, not `SJ.`) — strip trailing period before SQL queries; use `countyCodeMatches()` for comparisons |
 | 114 | District Boundary Events | Range Events | District, RouteID, FromARMeasure, ToARMeasure | District extents per route; used by `hsl_queryEndRecord` / `hsl_queryBeginRecord` to find END/BEGIN OF DISTRICT AR measures |
 | 116 | AllRoads (LRS) | Route Geometry | RouteID, FromARMeasure, ToARMeasure, Highway_Group | Route structure; `queryRangeLayer(116,'Highway_Group')` — also provides route max AR for END OF ROUTE detection |
 | 123 | Landmarks (EV_SHS_LANDMARK) | Point Events | Landmarks_Short/Long, ARMeasure, RouteID, PMPrefix/Suffix/Measure | Highway landmarks; also drives route dropdown in `onCountyChange` |
@@ -116,8 +116,24 @@ _hslPageStarts                                     // null | array: cached hsl_c
 | `onDistrictChange()` | Query layer 85 for counties in selected district |
 | `onCountyChange()` | Query layer 123 for routes in selected district+county |
 | `selectMode(mode)` | Switch between 'routeMeasure' and 'districtRoute' UI modes |
-| `populateCounties()` | Populate static `COUNTY_CODES` into from/to county dropdowns |
+| `populateCounties()` | Populate static `COUNTY_CODES` into **from-county only** (to-county is cascade-populated by route selection) |
 | `setupValidation()` | Input validation/mirroring for PM form fields |
+| `populateRouteSelect(countyCode, selId)` | Layer 85: populate route dropdown for a county. Strips trailing period from county code before SQL query (layer 85 stores `'LA'` not `'LA.'`) |
+| `onFromCountyChange()` | Cascades from-county → `populateRouteSelect`; resets from-route, to-route, to-county, all PM prefix/suffix fields |
+| `onFromRouteChange()` | Mirrors to-routeNum from from-routeNum (locked); cascades to `populatePmPrefixSelect` + `populateToCountySelect` |
+| `populatePmPrefixSelect(county, routeNum, routeSuffix)` | Layer 3: populate from-pmPrefix for county+route combination; auto-advances to suffix when only one option |
+| `populatePmSuffixSelect(county, routeNum, routeSuffix, pmPrefix)` | Layer 3: populate from-pmSuffix; auto-selects when only one option |
+| `onFromPmPrefixChange()` | Cascades from-pmPrefix → `populatePmSuffixSelect` |
+| `populateToCountySelect(routeNum, routeSuffix)` | Layer 85: populate to-county with only counties that have records for the selected route |
+| `onToCountyChange()` | Cascades to-county → `populateToPmPrefixSelect`; resets to-pmPrefix/to-pmSuffix |
+| `populateToPmPrefixSelect(county, routeNum, routeSuffix)` | Layer 3: populate to-pmPrefix for county+route combination |
+| `populateToPmSuffixSelect(county, routeNum, routeSuffix, pmPrefix)` | Layer 3: populate to-pmSuffix |
+| `onToPmPrefixChange()` | Cascades to-pmPrefix → `populateToPmSuffixSelect` |
+
+**Postmile form cascade order**
+- From Measure: County → Route # (layer 85) → PM Prefix (layer 3) → PM Suffix (layer 3) → Postmile
+- To Measure: Route # (mirrored, locked) → County (layer 85) → PM Prefix (layer 3) → PM Suffix (layer 3) → Postmile
+- Each step is disabled until its predecessor has a value; each auto-selects and cascades when only one option exists
 
 **Query dispatch**
 
@@ -126,6 +142,7 @@ _hslPageStarts                                     // null | array: cached hsl_c
 | `runDistrictRouteMode()` | Dispatch to report module's `*_runDistrictRouteMode()` |
 | `runTranslate()` | Dispatch to report module's `*_runTranslate()` |
 | `isPaginated()` | Returns `paginatedCheck.checked` |
+| `checkTranslateReady()` | Gates the Generate button; requires from-county, from-routeNum, from-pmPrefix, from-pmSuffix, from-measure, to-county, to-routeNum, to-pmPrefix, to-pmSuffix, to-measure all non-empty |
 
 **Versioning & date**
 
@@ -297,6 +314,8 @@ Phase 6: Render pipeline
 ### HSL Postmile Mode (hsl_runTranslate)
 Same as HSL district/route mode except Phase 1 starts with translate to get segments; no district/county filters on sub-queries.
 
+**Terminal record range guard:** Begin and end terminal records (BEGIN ROUTE, END OF ROUTE, END OF DISTRICT, etc.) are only inserted when their `arMeasure` falls within **0.1 miles** of the queried segment boundary (`segMinAR` / `segMaxAR` computed from `segments`). This prevents route-level terminal records from appearing on sub-range postmile queries (e.g. querying PM R7–R8 on a 50-mile route should not produce BEGIN ROUTE or END OF ROUTE rows).
+
 ---
 
 ## Report Modules
@@ -314,6 +333,10 @@ Same as HSL district/route mode except Phase 1 starts with translate to get segm
 - Highway Log: `hl_*` (e.g., `hl_renderRow`)
 - Intersection Detail: `intd_*` (e.g., `intd_queryIntersections`)
 - Ramp Summary: `rs_*` (e.g., `rs_buildSummary`)
+
+### Ramp Detail — Key Rendering Notes (`ramp_detail.js`)
+- **OF column** (`onOff` field from layer 131 `Ramp_On_Off_Ind`): `0` → `'F'`, `1` → `'N'`, `2` → `'Z'`, null → `''`
+- When `noLinearEvent` is true (ramp in layer 132 with no matching layer 131 record): OF, Area 4, and Ramp Design columns show `'-'`; Description shows `NO RAMP LINEAR EVENT` in italics
 
 ### Per-Page Rows
 | Report | Rows/Page |

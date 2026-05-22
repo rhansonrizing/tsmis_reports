@@ -23,11 +23,20 @@ Also reports total ramp count and ramp points without linework (ramps in layer 1
 
 | Method | Description |
 |---|---|
-| **Route** | All ramps on a selected route |
-| **District/Route** | Ramps on a route within a specific district |
-| **Route/Measure** | Ramps between two PM locations (with translation) |
+| **District/County/Route** | Features on a route, scoped by district and/or county |
+| **Postmile Locations** | Features between two PM locations (with PM→AR translation) |
 
-An optional **On/Off filter** (All / ON / OFF / OTHER) is available for all three methods. For Ramp Summary, this filter also changes the report title and restricts all summary counts to the selected category.
+An optional **On/Off filter** (All / ON / OFF / OTHER) is available for both methods. For Ramp Summary, this filter also changes the report title and restricts all summary counts to the selected category.
+
+### Postmile Form — Cascading Dropdowns
+
+Both the From and To measure fields use cascading dropdowns populated live from the ArcGIS service:
+
+**From Measure:** County → Route # (layer 85, filtered by county) → PM Prefix (layer 3, filtered by county+route) → PM Suffix (layer 3, filtered by county+route+prefix) → Postmile
+
+**To Measure:** Route # (locked — mirrors From) → County (layer 85, only counties with records for that route) → PM Prefix (layer 3) → PM Suffix (layer 3) → Postmile
+
+Each step is disabled until the prior step is set. When only one option exists at any step, it is auto-selected and the cascade advances automatically.
 
 ## Configuration
 
