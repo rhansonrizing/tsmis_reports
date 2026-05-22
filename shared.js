@@ -1755,7 +1755,7 @@ async function loadCountyCodeDomain() {
       <td>${p.noLinearEvent ? '-' : p.area4 === 1 ? 'Y' : p.area4 === 0 ? 'N' : ''}</td>
       <td>${p.cityCode ? esc(p.cityCode) : ''}</td>
       <td>${p.popCode ? esc(p.popCode) : ''}</td>
-      <td>${p.noLinearEvent ? '-' : p.onOff === 0 ? 'F' : p.onOff === 1 ? 'N' : p.onOff === 2 ? 'T' : ''}</td>
+      <td>${p.noLinearEvent ? '-' : p.onOff === 0 ? 'F' : p.onOff === 1 ? 'N' : p.onOff === 2 ? 'Z' : ''}</td>
       <td>${p.aadtYear ? esc(p.aadtYear) : ''}</td>
       <td>${p.aadt != null ? String(p.aadt).padStart(6, '0') : ''}</td>
       <td>${p.noLinearEvent ? '-' : p.rampDesign ? esc(p.rampDesign) : ''}</td>

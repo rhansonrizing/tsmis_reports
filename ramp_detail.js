@@ -200,7 +200,7 @@
          <span>${p.noLinearEvent ? '-' : p.area4 === 1 ? 'Y' : p.area4 === 0 ? 'N' : ''}</span>
          <span>${p.cityCode ? esc(p.cityCode) : ''}</span>
          <span>${p.popCode ? esc(p.popCode) : ''}</span>
-         <span>${p.noLinearEvent ? '-' : p.onOff === 0 ? 'F' : p.onOff === 1 ? 'N' : p.onOff === 2 ? 'T' : ''}</span>
+         <span>${p.noLinearEvent ? '-' : p.onOff === 0 ? 'F' : p.onOff === 1 ? 'N' : p.onOff === 2 ? 'Z' : ''}</span>
          <span>${p.aadtYear ? esc(p.aadtYear) : ''}</span>
          <span>${p.aadt != null ? String(p.aadt).padStart(6, '0') : ''}</span>
          <span>${p.noLinearEvent ? '-' : p.rampDesign ? esc(p.rampDesign) : ''}</span>
