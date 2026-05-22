@@ -2054,7 +2054,7 @@ async function loadCountyCodeDomain() {
                  : isPlainS      ? p.routeId.slice(0, -1) + 'P'
                  : p.routeId;
       const ridS = isS ? p.routeId : null;
-      const m = (layerNum === 116 || layerNum === 74)
+      const m = (layerNum === 116 || layerNum === 74 || layerNum === 130)
         ? p.arMeasure
         : ((p.odMeasure !== '' && p.odMeasure != null) ? parseFloat(p.odMeasure) : p.arMeasure);
       if (m == null || isNaN(m)) continue;
@@ -2113,7 +2113,7 @@ async function loadCountyCodeDomain() {
                       : isPlainS      ? p.routeId.slice(0, -1) + 'P'
                       : p.routeId;
       const lookupIdS = isS ? p.routeId : null;
-      const m = (layerNum === 116 || layerNum === 74)
+      const m = (layerNum === 116 || layerNum === 74 || layerNum === 130)
         ? p.arMeasure
         : ((p.odMeasure !== '' && p.odMeasure != null) ? parseFloat(p.odMeasure) : p.arMeasure);
       const candidatesP = byRoute.get(lookupId)  ?? [];

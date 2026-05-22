@@ -53,7 +53,7 @@
       fetchDescriptions(),
       queryRangeLayer(allPairs, 116, 'Highway_Group'),
       queryRangeLayer(allPairs, 74,  'City_Code'),
-      queryRangeLayer(allPairs, 130, 'Population_Code', 'BeginODMeasure', 'EndODMeasure'),
+      queryRangeLayer(allPairs, 130, 'Population_Code'),
       translateToOD(allPairs),
       queryAadt(allPairs)
     ]);

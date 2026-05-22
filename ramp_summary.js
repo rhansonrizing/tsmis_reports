@@ -154,7 +154,7 @@
     const [hwyMap, { onOffMap, rampDesignMap }, popMap, cityMap] = await Promise.all([
       queryRangeLayer(allPairs, 116, 'Highway_Group'),
       rs_queryOnOff(allPairs),
-      queryRangeLayer(allPairs, 130, 'Population_Code', 'BeginODMeasure', 'EndODMeasure'),
+      queryRangeLayer(allPairs, 130, 'Population_Code'),
       queryRangeLayer(allPairs, 74,  'City_Code')
     ]);
 

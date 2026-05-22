@@ -565,9 +565,9 @@
       rbTMap, rbLnsMap, rbFMap, rbTo1Map, rbTr1Map, rbWidMap, rbTo2Map, rbTr2Map,
       adtMaps
     ] = await Promise.all([
-      queryRangeLayer(pairs, 74,  'City_Code', 'BeginODMeasure', 'EndODMeasure'),
+      queryRangeLayer(pairs, 74,  'City_Code'),
       queryRangeLayer(pairs, 125, 'Non_Add_Mileage'),
-      queryRangeLayer(pairs, 130, 'Population_Code', 'BeginODMeasure', 'EndODMeasure'),
+      queryRangeLayer(pairs, 130, 'Population_Code'),
       queryRangeLayer(pairs, 113, 'Design_Speed'),
       queryRangeLayer(pairs, 11,  'Terrain_Type'),
       queryRangeLayer(pairs, 116, 'Highway_Group'),
