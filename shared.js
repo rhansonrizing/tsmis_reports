@@ -1079,11 +1079,12 @@ async function loadCountyCodeDomain() {
     const rbBreaks  = main.filter(p => p.type === 'routebreak' && p.desc === 'Route Break');
     const rbResumes = main.filter(p => p.type === 'routebreak' && p.desc === 'Route Resume');
     const rbResumeForBreak = new Map(); // break.name → resume pair
+    const odOrAr = p => { const v = parseFloat(p.odMeasure); return !isNaN(v) ? v : (p.arMeasure ?? Infinity); };
     for (const brk of rbBreaks) {
-      const brkAr = brk.arMeasure ?? Infinity;
+      const brkOd = odOrAr(brk);
       const paired = rbResumes
-        .filter(r => (r.arMeasure ?? Infinity) >= brkAr)
-        .sort((x, y) => (x.arMeasure ?? Infinity) - (y.arMeasure ?? Infinity))[0];
+        .filter(r => odOrAr(r) >= brkOd)
+        .sort((x, y) => odOrAr(x) - odOrAr(y))[0];
       if (paired) rbResumeForBreak.set(brk.name, paired);
     }
     // Build reverse map: resume.name → its Route Break
@@ -1092,51 +1093,54 @@ async function loadCountyCodeDomain() {
       rbBreakForResume.set(resume.name, main.find(p => p.name === brkName));
     }
 
-    // ── Alignment-start AR fixup ─────────────────────────────────────────────
+    // ── Alignment-start OD fixup ─────────────────────────────────────────────
     // Equation points marking the START of an R/L alignment (non-empty pmPrefix,
-    // pmMeasure ≈ 0) get their arMeasure from the PM-network calibration
-    // translation. That value can differ slightly from the AllRoads AR of the
-    // first alignment records sharing the same pmPrefix — either slightly below
-    // (original case) or slightly above (e.g. an sfx:L landmark that translates
-    // lower than eq2's calibration AR). In either case, the outer grouping loop
-    // can reach an R/L record before eq2 in main[], start a section prematurely,
-    // and leave that record in the wrong alignment group or above the eq pair.
+    // pmMeasure ≈ 0) can have an OD from calibration translation that differs
+    // slightly from the OD of the first alignment records sharing the same pmPrefix.
+    // If alignment records sort before eq2, the outer grouping loop triggers a
+    // section prematurely, leaving records in the wrong group or above the eq pair.
     //
-    // Fix: clamp eq2.arMeasure down to just below the minimum AR of non-boundary
-    // records sharing its pmPrefix (Math.min handles both over- and under-shoot).
-    // The equation-type tiebreak then guarantees eq2 sorts first within the shared
-    // 3dp bucket, so the outer loop pushes eq2 (via the else branch) before any
-    // alignment record triggers a new section.
+    // Fix: clamp eq2.odMeasure down to just below the minimum OD of non-boundary
+    // records sharing its pmPrefix. The equation-type tiebreak then guarantees eq2
+    // sorts first within the shared 3dp bucket.
     for (const p of main) {
       if (p.type !== 'equation' || !p.isSecondEq) continue;
       const pfx = p.pmPrefix;
-      if (!pfx || pfx === '') continue;                  // only non-empty prefixes
-      if (parseFloat(p.pmMeasure) >= 0.01) continue;    // only pm ≈ 0 (alignment start)
-      let minPfxAr = Infinity;
+      if (!pfx || pfx === '') continue;
+      if (parseFloat(p.pmMeasure) >= 0.01) continue;
+      const eq2Od = parseFloat(p.odMeasure);
+      if (isNaN(eq2Od)) continue;
+      let minPfxOd = Infinity;
       for (const r of main) {
         if (r === p || r.pmPrefix !== pfx) continue;
-        if (r.arMeasure == null || isNaN(r.arMeasure)) continue;
-        if (r.type === 'landmark' && (               // skip IA boundary landmarks
+        const rOd = parseFloat(r.odMeasure);
+        if (isNaN(rOd)) continue;
+        if (r.type === 'landmark' && (
           r.desc === 'BEGIN LEFT INDEPENDENT ALIGNMENT'  || r.desc === 'END LEFT INDEPENDENT ALIGNMENT'  ||
           r.desc === 'BEGIN RIGHT INDEPENDENT ALIGNMENT' || r.desc === 'END RIGHT INDEPENDENT ALIGNMENT'
         )) continue;
-        minPfxAr = Math.min(minPfxAr, r.arMeasure);
+        minPfxOd = Math.min(minPfxOd, rOd);
       }
-      if (minPfxAr < Infinity) {
-        p.arMeasure = Math.min(p.arMeasure, minPfxAr - 0.0005);
+      if (minPfxOd < Infinity) {
+        p.odMeasure = String(Math.min(eq2Od, minPfxOd - 0.0005));
       }
     }
 
     main.sort((a, b) => {
-      const aAr = a.arMeasure;
-      const bAr = b.arMeasure;
-      // Treat missing AR as Infinity so null/NaN records don't break comparator
+      // Primary sort key is OD (Odometer), falling back to AR for records without OD.
+      // OD increases monotonically along the route and tracks PM ordering near equation
+      // boundaries better than AR (which reflects raw geometry and can diverge from the
+      // PM calibration system near equation points).
+      // Treat missing values as Infinity so null/NaN records don't break comparator
       // consistency (which corrupts TimSort for all nearby records).
-      // Round to 3 decimal places before comparing so that two AR values that
-      // agree to 3dp (e.g. 239.2454 vs 239.2466) are treated as co-located and
-      // fall through to the tiebreak rules below rather than sorting by raw AR.
-      const aVal = (aAr == null || isNaN(aAr)) ? Infinity : Math.round(aAr * 1000) / 1000;
-      const bVal = (bAr == null || isNaN(bAr)) ? Infinity : Math.round(bAr * 1000) / 1000;
+      // Round to 3 decimal places before comparing so that two values that agree to
+      // 3dp are treated as co-located and fall through to the tiebreak rules below.
+      const aOd  = parseFloat(a.odMeasure);
+      const bOd  = parseFloat(b.odMeasure);
+      const aRaw = !isNaN(aOd) ? aOd : (a.arMeasure ?? Infinity);
+      const bRaw = !isNaN(bOd) ? bOd : (b.arMeasure ?? Infinity);
+      const aVal = (aRaw == null || !isFinite(aRaw)) ? Infinity : Math.round(aRaw * 1000) / 1000;
+      const bVal = (bRaw == null || !isFinite(bRaw)) ? Infinity : Math.round(bRaw * 1000) / 1000;
       const diff = aVal - bVal;
       // City boundary records sort before intersections/ramps at the same PM even
       // when their stored AR values differ slightly: layer 74's FromARMeasure /
@@ -1162,11 +1166,11 @@ async function loadCountyCodeDomain() {
       // as a marker but must fall through to the equation tiebreak below.
       if (a.pmSuffix === 'E' && b.pmSuffix !== 'E' && a.type !== 'equation') return 1;
       if (a.pmSuffix !== 'E' && b.pmSuffix === 'E' && b.type !== 'equation') return -1;
-      // Equation points sort before all other record types at the same AR position.
+      // Equation points sort before all other record types at the same OD position.
       if (a.type === 'equation' && b.type !== 'equation') return -1;
       if (a.type !== 'equation' && b.type === 'equation') return 1;
-      // Two equation points at the same 3dp AR: use full precision to differentiate.
-      if (a.type === 'equation' && b.type === 'equation') return (aAr ?? Infinity) - (bAr ?? Infinity);
+      // Two equation points at the same 3dp position: use full precision to differentiate.
+      if (a.type === 'equation' && b.type === 'equation') return aRaw - bRaw;
       // Same PM combination: H (landmarks/equations/etc.) before I (intersections) before R (ramps).
       // Within H type, H-valued HG records before non-H (R, L, D, etc.).
       // Use parseFloat+toFixed(3) for pmMeasure so "020.558" and "20.558" compare equal.
@@ -1341,7 +1345,8 @@ async function loadCountyCodeDomain() {
               // are collected so they can be absorbed into the section's dotGroup output,
               // ensuring they appear before the equation pair rather than after it.
               let peekK = i + 1;
-              const eq2Ar3dp = Math.round(cur.arMeasure * 1000);
+              const eq2OdRaw = !isNaN(parseFloat(cur.odMeasure)) ? parseFloat(cur.odMeasure) : (cur.arMeasure ?? 0);
+              const eq2Od3dp = Math.round(eq2OdRaw * 1000);
               const peekedIABounds = [];
               while (peekK < main.length) {
                 const pk = main[peekK];
@@ -1349,14 +1354,15 @@ async function loadCountyCodeDomain() {
                 if (isIABoundaryRec(pk)) {
                   // Single-side INDEP ALIGN records that fail the PMPrefix test are
                   // not absorbed — they outer-push naturally after the eq pair,
-                  // alongside other neutral IA boundaries at the same AR.
+                  // alongside other neutral IA boundaries at the same position.
                   if (indepNoPmPfxMatch.has(pk)) { peekK++; continue; }
                   // Collect ALL IA boundary records (both dot-sfx and R/L-sfx) so
                   // they can be unconditionally absorbed into this section below.
                   peekedIABounds.push(pk);
                   peekK++; continue;
                 }
-                if (Math.round(pk.arMeasure * 1000) === eq2Ar3dp &&
+                const pkOdRaw = !isNaN(parseFloat(pk.odMeasure)) ? parseFloat(pk.odMeasure) : (pk.arMeasure ?? 0);
+                if (Math.round(pkOdRaw * 1000) === eq2Od3dp &&
                     pk.pmSuffix !== 'R' && pk.pmSuffix !== 'L' &&
                     pk.hgValue !== 'R'  && pk.hgValue !== 'L') { peekK++; continue; }
                 break;
@@ -1578,10 +1584,10 @@ async function loadCountyCodeDomain() {
       if (eq2.type !== 'equation' || !eq2.isSecondEq) continue;
       if (eq1.eqPairId !== eq2.eqPairId)              continue;
 
-      // Only act when both endpoints share the same AR to 3dp.
-      const ar1 = Math.round((eq1.arMeasure ?? 0) * 1000);
-      const ar2  = Math.round((eq2.arMeasure ?? 0) * 1000);
-      if (ar1 !== ar2) continue;
+      // Only act when both endpoints share the same OD (AR fallback) to 3dp.
+      const od1v = !isNaN(parseFloat(eq1.odMeasure)) ? parseFloat(eq1.odMeasure) : (eq1.arMeasure ?? 0);
+      const od2v = !isNaN(parseFloat(eq2.odMeasure)) ? parseFloat(eq2.odMeasure) : (eq2.arMeasure ?? 0);
+      if (Math.round(od1v * 1000) !== Math.round(od2v * 1000)) continue;
 
       // Normalize prefix: treat '.' and '' as equivalent (no prefix).
       // Equation records store dot-prefix as '' but landmark/other records store '.'.

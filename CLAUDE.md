@@ -171,7 +171,7 @@ _hslPageStarts                                     // null | array: cached hsl_c
 
 | Function | Purpose |
 |----------|---------|
-| `queryRangeLayer(pairs, layerNum, fieldName, fromField?, toField?)` | Generic AR-range lookup; builds one query per unique routeId; returns `Map<name, value>` |
+| `queryRangeLayer(pairs, layerNum, fieldName, fromField?, toField?)` | Generic range lookup; builds one query per unique routeId; returns `Map<name, value>`. Layers 74, 116, and 130 use `arMeasure` as the lookup measure; all others use `odMeasure` (AR fallback). Default fromField/toField are `FromARMeasure`/`ToARMeasure`. |
 | `translateToOD(allPairs)` | Returns `Map<name, odMeasure>` from pre-populated `p.odMeasure` fields |
 
 **Utilities**
@@ -337,6 +337,10 @@ Same as HSL district/route mode except Phase 1 starts with translate to get segm
 ### Ramp Detail — Key Rendering Notes (`ramp_detail.js`)
 - **OF column** (`onOff` field from layer 131 `Ramp_On_Off_Ind`): `0` → `'F'`, `1` → `'N'`, `2` → `'Z'`, null → `''`
 - When `noLinearEvent` is true (ramp in layer 132 with no matching layer 131 record): OF, Area 4, and Ramp Design columns show `'-'`; Description shows `NO RAMP LINEAR EVENT` in italics
+- **Print**: clicking Print opens a `showPrompt` modal asking "Enter report title:" before printing. Cancel aborts; OK (including empty string) proceeds with the entered title on the cover page.
+
+### Ramp Summary — Key Notes (`ramp_summary.js`)
+- **Print**: same `showPrompt` modal behavior as Ramp Detail — `rs_printAll` is async, prompts for title, passes it to `rs_renderPage(titleOverride)` which uses it in `buildCoverPage` instead of the auto-generated `"All [On/Off] Ramps on Route NNN"` label. Screen renders call `rs_renderPage()` with no argument and use the auto-generated label.
 
 ### Per-Page Rows
 | Report | Rows/Page |
@@ -668,26 +672,26 @@ const main = pairs.filter(p => {
 ```
 Equation points come in pairs (source measure → "EQUATES TO" measure). The first of each pair (`isSecondEq = false`) is removed from the main array and stored by `eqPairId`. It will be re-inserted immediately before its partner in Step 4.
 
-#### Step 1.5 — Alignment-start AR fixup (pre-sort)
+#### Step 1.5 — Alignment-start OD fixup (pre-sort)
 
-Before sorting, eq2 records with a non-empty `pmPrefix` and `pmMeasure ≈ 0` (marking the start of an R/L alignment) have their `arMeasure` clamped:
+Before sorting, eq2 records with a non-empty `pmPrefix` and `pmMeasure ≈ 0` (marking the start of an R/L alignment) have their `odMeasure` clamped:
 
 ```javascript
-p.arMeasure = Math.min(p.arMeasure, minPfxAr - 0.0005);
+p.odMeasure = String(Math.min(eq2Od, minPfxOd - 0.0005));
 ```
 
-where `minPfxAr` is the minimum AR of all records sharing the same `pmPrefix` that are not INDEP ALIGN landmarks (i.e., where `isIABoundaryRec` is false). This handles both undershoot and overshoot from calibration translation — without it the outer grouping loop could reach an R/L record before eq2 and start a premature section.
+where `minPfxOd` is the minimum OD of all records sharing the same `pmPrefix` that are not INDEP ALIGN landmarks (i.e., where `isIABoundaryRec` is false). This handles both undershoot and overshoot from calibration translation — without it the outer grouping loop could reach an R/L record before eq2 and start a premature section.
 
-#### Step 2 — Sort remaining records by ARMeasure
+#### Step 2 — Sort remaining records by OD (AR fallback)
 
-Records are sorted by AR rounded to 3dp. Tiebreaks (in order):
+Records are sorted by OD (Odometer) rounded to 3dp, falling back to AR for records without OD (e.g. synthetic terminal records). OD increases monotonically along the route and tracks PM ordering near equation boundaries better than AR, which reflects raw geometry and can diverge from the PM calibration system. Tiebreaks (in order):
 - If `diff !== 0` but one record is a city boundary (`citybegin`/`cityend`) and the other is an intersection or ramp with the **same normalized PM key**: city boundary sorts first. Handles cases where layer 74 AR values don't exactly match translated intersection ARs.
 - `pmPrefix` `'.'` and `''` are normalized to `''` in all PM key comparisons.
-- Equation records sort before all others at the same rounded AR.
-- E-suffix records sort last at the same AR (except eq2, which uses `pmSuffix='E'` as a rendering marker and must not be treated as an end-marker).
+- Equation records sort before all others at the same rounded OD.
+- E-suffix records sort last at the same OD (except eq2, which uses `pmSuffix='E'` as a rendering marker and must not be treated as an end-marker).
 - Within the same PM key: H (landmarks/equations/route breaks/city records) before I (intersections) before R (ramps). Within H, HG=H records sort before others.
 
-NaN AR values are treated as `Infinity`.
+Missing OD values fall back to AR; NaN/null values are treated as `Infinity`.
 
 #### Step 2.5 — Pre-compute `indepNoPmPfxMatch`
 
@@ -754,7 +758,7 @@ This ensures equation point pairs always appear adjacently in the final output, 
 **Location:** `shared.js`
 **Called by:** both `hsl_runDistrictRouteMode` and `hsl_runTranslate` after the sort pipeline.
 
-When two equation-pair records have the same AR to 3dp, the AR-based sort may put them in the wrong order relative to surrounding context. `fixEqPairOrder` scans for adjacent eq1/eq2 pairs at the same 3dp AR and swaps the PM-related fields (`pmPrefix, pmSuffix, pmMeasure, routeId, arMeasure, odMeasure, county, name`) when the surrounding context indicates the pair is reversed.
+When two equation-pair records have the same OD (AR fallback) to 3dp, the sort may put them in the wrong order relative to surrounding context. `fixEqPairOrder` scans for adjacent eq1/eq2 pairs at the same 3dp OD and swaps the PM-related fields (`pmPrefix, pmSuffix, pmMeasure, routeId, arMeasure, odMeasure, county, name`) when the surrounding context indicates the pair is reversed.
 
 - Only swaps PM-related fields; structural fields (`desc, isSecondEq, eqPairId, type`) stay in place so rendering labels are unaffected.
 - Context scan includes H, I, and R records — any non-equation record. Records whose PMMeasure is within 0.001 of either eq point's PM are excluded as co-located and unreliable.

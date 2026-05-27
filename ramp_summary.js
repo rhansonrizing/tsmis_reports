@@ -273,7 +273,7 @@ const code     = pmSuffix === 'L' ? 'L' : rawHwy;
 
   // ── RS: Ramp Summary — Render ──────────────────────────────────────────────
 
-  function rs_renderPage() {
+  function rs_renderPage(titleOverride) {
     if (!_rs_summary) return;
     const box = document.getElementById('rampResults');
     box.style.display = 'block';
@@ -309,7 +309,7 @@ const code     = pmSuffix === 'L' ? 'L' : rawHwy;
 
     const coverPage = buildCoverPage({
       coverTitle:  'TSAR - RAMPS SUMMARY',
-      reportTitle: onOffLabel + ' on Route ' + (_routeLabel || ''),
+      reportTitle: titleOverride != null ? titleOverride : (onOffLabel + ' on Route ' + (_routeLabel || '')),
       refDate:     _rs_summary.refDate,
       district:    _rs_summary.district,
       county:      _rs_summary.county,
@@ -370,10 +370,12 @@ const code     = pmSuffix === 'L' ? 'L' : rawHwy;
        </div>`;
   }
 
-  function rs_printAll() {
+  async function rs_printAll() {
+    const rsTitle = await showPrompt('Enter report title:');
+    if (rsTitle === null) return;
     const box   = document.getElementById('rampResults');
     const saved = box.innerHTML;
-    rs_renderPage();
+    rs_renderPage(rsTitle);
     window.addEventListener('afterprint', () => { box.innerHTML = saved; }, { once: true });
     window.print();
   }
