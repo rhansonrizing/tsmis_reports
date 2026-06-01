@@ -8,7 +8,7 @@ A single-page web application for querying and displaying Caltrans highway and r
 Displays highway features in sequence along a route, including post mile data, highway groups, feature types, distances, and descriptions. Supports equation points and supplemental alignments.
 
 ### TSAR: Ramp Detail
-Displays individual ramp records along a route with attributes including highway group, feature type, on/off indicator, ramp design, population group, city code, AADT, and OD measure.
+Displays individual ramp records along a route with attributes including highway group, feature type, on/off indicator, ramp design, population group, and city code.
 
 ### TSAR: Ramp Summary
 Displays aggregate counts of ramps along a route grouped by:
@@ -63,8 +63,7 @@ Authentication uses OAuth 2.0 implicit flow. The redirect URL must match a regis
 | 116 | Highway Group |
 | 130 | Population Code |
 | 131 | Ramp attributes (On/Off, Ramp Design, Description) |
-| 132 | Ramp point events (primary source for ramp pairs; fields include RouteNum, Alignment for AADT matching) |
-| 157 | AADT — matched to ramps by PM attribution (RouteNum, RouteSuffix, Alignment, County, PMPrefix, PMSuffix, PMMeasure); highest AADT_YEAR selected, AADT_CODE=1 breaks ties |
+| 132 | Ramp point events (primary source for ramp pairs) |
 
 ## HSL Record Suppression Logic
 

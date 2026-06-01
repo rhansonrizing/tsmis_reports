@@ -49,13 +49,12 @@
       return { descMap, area4Map, onOffMap, rampDesignMap, noMatchSet };
     };
 
-    const [{ descMap, area4Map, onOffMap, rampDesignMap, noMatchSet }, hwyMap, cityMap, popMap, odMap, { aadtYearMap, aadtMap }] = await Promise.all([
+    const [{ descMap, area4Map, onOffMap, rampDesignMap, noMatchSet }, hwyMap, cityMap, popMap, odMap] = await Promise.all([
       fetchDescriptions(),
       queryRangeLayer(allPairs, 116, 'Highway_Group'),
       queryRangeLayer(allPairs, 74,  'City_Code'),
       queryRangeLayer(allPairs, 130, 'Population_Code'),
-      translateToOD(allPairs),
-      queryAadt(allPairs)
+      translateToOD(allPairs)
     ]);
 
     const results = allPairs.map((p) => {
@@ -70,8 +69,6 @@
       popCode:     popMap.get(p.name)     ?? '',
       onOff:       onOffMap.get(p.name)      ?? null,
       rampDesign:  rampDesignMap.get(p.name) ?? '',
-      aadtYear:    aadtYearMap.get(p.name) ?? '',
-      aadt:        aadtMap.get(p.name)     ?? null,
       county:      p.county,
       district:    p.district ?? '',
       routeSuffix: p.routeSuffix,
@@ -96,77 +93,6 @@
       return aOd - bOd;
     });
     showRampResults('success', null, filtered);
-  }
-
-  // Returns { aadtYearMap, aadtMap } from layer 157 for the given pairs,
-  // matched by PM attribution (County, RouteNum, RouteSuffix, Alignment, PMPrefix, PMSuffix, PMMeasure).
-  // Among candidates: highest AADT_YEAR wins; ties broken by AADT_CODE = 1.
-  async function queryAadt(pairs) {
-    const aadtYearMap = new Map();
-    const aadtMap     = new Map();
-    if (pairs.length === 0) return { aadtYearMap, aadtMap };
-
-    const normPfx = v => (v === '.' ? '' : (v ?? ''));
-
-    // One query per unique (County, RouteNum, RouteSuffix, Alignment) combination
-    const routeGroups = new Map();
-    for (const p of pairs) {
-      if (!p.routeNum || !p.alignment) continue;
-      const key = `${p.county}|${p.routeNum}|${p.routeSuffix}|${p.alignment}`;
-      if (!routeGroups.has(key)) routeGroups.set(key, { county: p.county, routeNum: p.routeNum, routeSuffix: p.routeSuffix, alignment: p.alignment });
-    }
-
-    const featuresByKey = new Map();
-    await Promise.all([...routeGroups.entries()].map(async ([key, g]) => {
-      const where = `County = '${g.county}' AND RouteNum = '${g.routeNum}' AND RouteSuffix = '${g.routeSuffix}' AND Alignment = '${g.alignment}'`;
-      const body = new URLSearchParams({
-        where,
-        outFields:      'County,RouteNum,RouteSuffix,Alignment,PMPrefix,PMSuffix,PMMeasure,AADT_YEAR,AADT,AADT_CODE',
-        returnGeometry: 'false',
-        ...versionParam(),
-        f:              'json',
-        token:          _token
-      });
-      try {
-        const resp = await fetch(`${CONFIG.mapServiceUrl}/157/query`, {
-          method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString()
-        });
-        const data = await resp.json();
-        if (data.error) {
-          const code = data.error.code;
-          if (code === 498 || code === 499) { _token = null; login(); }
-          console.error(`[queryAadt] API error ${code}: ${data.error.message}`);
-          featuresByKey.set(key, []);
-          return;
-        }
-        featuresByKey.set(key, Array.isArray(data.features) ? data.features.map(f => f.attributes) : []);
-      } catch (e) {
-        console.error('[queryAadt] error:', e.message);
-        featuresByKey.set(key, []);
-      }
-    }));
-
-    // Match each pair to layer 157 candidates by PM attributes
-    for (const p of pairs) {
-      if (!p.routeNum || !p.alignment) continue;
-      const key = `${p.county}|${p.routeNum}|${p.routeSuffix}|${p.alignment}`;
-      const features = featuresByKey.get(key) ?? [];
-      const pmMeasure = parseFloat(p.pmMeasure);
-      const candidates = features.filter(a =>
-        normPfx(a.PMPrefix) === normPfx(p.pmPrefix) &&
-        (a.PMSuffix ?? '.') === (p.pmSuffix ?? '.') &&
-        Math.abs(parseFloat(a.PMMeasure) - pmMeasure) < 0.0005
-      );
-      const match = candidates.reduce((best, a) => {
-        if (!best) return a;
-        if ((a.AADT_YEAR ?? 0) > (best.AADT_YEAR ?? 0)) return a;
-        if (a.AADT_YEAR === best.AADT_YEAR && a.AADT_CODE === 1 && best.AADT_CODE !== 1) return a;
-        return best;
-      }, null);
-      aadtYearMap.set(p.name, match?.AADT_YEAR != null ? String(match.AADT_YEAR) : '');
-      aadtMap.set(p.name,     match?.AADT      ?? null);
-    }
-    return { aadtYearMap, aadtMap };
   }
 
   // ── TSAR: Ramp Detail — Result display ───────────────────────────────────
@@ -201,8 +127,6 @@
          <span>${p.cityCode ? esc(p.cityCode) : ''}</span>
          <span>${p.popCode ? esc(p.popCode) : ''}</span>
          <span>${p.noLinearEvent ? '-' : p.onOff === 0 ? 'F' : p.onOff === 1 ? 'N' : p.onOff === 2 ? 'Z' : ''}</span>
-         <span>${p.aadtYear ? esc(p.aadtYear) : ''}</span>
-         <span>${p.aadt != null ? String(p.aadt).padStart(6, '0') : ''}</span>
          <span>${p.noLinearEvent ? '-' : p.rampDesign ? esc(p.rampDesign) : ''}</span>
          <span>${p.noLinearEvent ? '<i>NO RAMP LINEAR EVENT</i>' : p.desc ? esc(p.desc) : ''}</span>
          <span style="color:#888;font-size:0.8em">${p.arMeasure != null ? parseFloat(p.arMeasure).toFixed(3) : ''}</span>
@@ -254,8 +178,6 @@
          <span>CITY CODE</span>
          <span>R<br>U</span>
          <span>O<br>F</span>
-         <span>AADT<br>YEAR</span>
-         <span>ADT</span>
          <span>T<br>Y</span>
          <span>Description</span>
          <span style="color:#888;font-size:0.8em">AR</span>

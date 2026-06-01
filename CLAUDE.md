@@ -70,11 +70,10 @@ For local dev: change `oauthRedirectUrl` to `http://localhost:5500/index.html`.
 | 123 | Landmarks (EV_SHS_LANDMARK) | Point Events | Landmarks_Short/Long, ARMeasure, RouteID, PMPrefix/Suffix/Measure | Highway landmarks; also drives route dropdown in `onCountyChange` |
 | 130 | Population Code | Range Events | Population_Code, FromARMeasure, ToARMeasure | Rural/Urban classification |
 | 131 | Ramp Attributes | Feature Table | Ramp_Name, Ramp_Description, Ramp_On_Off_Ind (0/1/2), Ramp_Design, Area4_Ind | Ramp descriptions & classification |
-| 132 | Ramp Point Events (EV_SHS_RAMP) | Point Events | Ramp_Name, ARMeasure, ODMeasure, RouteID, RouteNum, RouteSuffix, Alignment, PMPrefix/Suffix/Measure, County, District | **Primary ramp data source**; paginated (1000/page); RouteNum and Alignment fetched to support PM-based AADT lookup |
+| 132 | Ramp Point Events (EV_SHS_RAMP) | Point Events | Ramp_Name, ARMeasure, ODMeasure, RouteID, RouteNum, RouteSuffix, Alignment, PMPrefix/Suffix/Measure, County, District | **Primary ramp data source**; paginated (1000/page) |
 | 133 | Route Breaks (EV_SHS_ROUTE_BREAK) | Point Events | ARMeasure, RouteID, Route_Break_Type | Route discontinuities (Route Break / Route Resume) |
 | 149 | Intersection AOI | Polygons | — | Intersection area-of-interest polygons (legacy path; no longer used) |
 | 151 | Intersection Attributes | Feature Table | INTERSECTION_ID, County_Code, District_Code, Main_RouteNum/PMPrefix/PMSuffix/PMMeasure, Cross_* | Intersection details; queried for both main-route and cross-route intersections; also provides county code domain for `loadCountyCodeDomain` |
-| 157 | AADT | Point Events | RouteNum, RouteSuffix, Alignment, County, PMPrefix, PMSuffix, PMMeasure, AADT_YEAR, AADT, AADT_CODE | Average Annual Daily Traffic; matched to ramp pairs by PM attribution (RouteNum+RouteSuffix+Alignment+County+PMPrefix+PMSuffix+PMMeasure ±0.0005); highest AADT_YEAR wins, AADT_CODE=1 breaks ties |
 | 215 | HSL Crash Data (Route/District/County Index) | Feature Table | routeId, fromMeasure, District_Code, County, RouteNum, hslDescription, Highway_Group, FileType, distToNextLandmark, PMPrefix, PMSuffix, PMMeasure, LRSFromDate | **"Push to Crash"** target: `hsl_exportEdit` deletes existing records in the AR range and writes current HSL results; also drives cascading dropdown data |
 | 304 | Route Directions | Table | ROUTE, FROM_, TO_ | Human-readable directional labels |
 
@@ -230,7 +229,7 @@ The "Push to Crash" button (`hsl_exportEdit`) only appears when **both** a non-d
 Select District → query layer 85 for counties
 Select County → query layer 123 for routes
 Select Route → queryAttributeSet() on full range (-0.001 to 999.999)
-→ enrich with queryRangeLayer(116,74,130), translateToOD, layer 131, layer 157
+→ enrich with queryRangeLayer(116,74,130), translateToOD, layer 131
 → sort by ODMeasure → render → paginate
 ```
 
