@@ -354,9 +354,10 @@
       const nameLower = name.toLowerCase();
       const isBeginRealign = nameLower === 'begin realignment';
       const isEndRealign   = nameLower === 'end realignment';
+      const longName = a.Landmarks_Long && a.Landmarks_Long !== name ? a.Landmarks_Long.trim() : '';
       const desc = (isBeginRealign || isEndRealign)
         ? `${isBeginRealign ? 'BEGIN' : 'END'}${pmPfx ? ` ${pmPfx}` : ''} REALIGNMENT`
-        : name;
+        : (longName ? `${name}, ${longName}` : name);
       // Use a composite key as pair.name so that downstream pipeline lookups
       // (queryRangeLayer, translateToOD, hsl_queryRampDescriptions) each get a
       // unique slot per landmark even when Landmarks_Short repeats at different
