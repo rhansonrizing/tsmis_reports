@@ -356,7 +356,7 @@
 
     .ramp-col-template {
       display: grid;
-      grid-template-columns: 11ch 2ch 9ch 10ch 4ch 3ch 7ch 2ch 2ch 2ch 4fr 8ch 8ch;
+      grid-template-columns: 11ch 2ch 9ch 10ch 4ch 3ch 7ch 2ch 2ch 2ch 4fr;
       gap: 0.5rem;
       align-items: center;
     }

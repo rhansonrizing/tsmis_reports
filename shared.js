@@ -2231,7 +2231,7 @@ async function loadCountyCodeDomain() {
       <tr>
         <th>Location</th><th>P<br>R<br>E</th><th>PM</th><th>DATE OF<br>RECORD</th>
         <th>H<br>G</th><th>AREA 4</th><th>CITY CODE</th><th>R<br>U</th><th>O<br>F</th>
-        <th>T<br>Y</th><th>Description</th>
+        <th>T<br>Y</th><th style="text-align:left">Description</th>
       </tr></thead>`;
 
     const rows = _allResults.map(p => `<tr>
@@ -2245,7 +2245,7 @@ async function loadCountyCodeDomain() {
       <td>${p.popCode ? esc(p.popCode) : ''}</td>
       <td>${p.noLinearEvent ? '-' : p.onOff === 0 ? 'F' : p.onOff === 1 ? 'N' : p.onOff === 2 ? 'Z' : ''}</td>
       <td>${p.noLinearEvent ? '-' : p.rampDesign ? esc(p.rampDesign) : ''}</td>
-      <td>${p.noLinearEvent ? '<i>NO RAMP LINEAR EVENT</i>' : p.desc ? esc(p.desc) : ''}</td>
+      <td style="text-align:left">${p.noLinearEvent ? '<i>NO RAMP LINEAR EVENT</i>' : p.desc ? esc(p.desc) : ''}</td>
     </tr>`).join('');
 
     const generatedFooter = `<div class="generated-on">Generated on ${esc(_generatedOn)}</div>`;

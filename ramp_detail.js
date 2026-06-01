@@ -128,9 +128,7 @@
          <span>${p.popCode ? esc(p.popCode) : ''}</span>
          <span>${p.noLinearEvent ? '-' : p.onOff === 0 ? 'F' : p.onOff === 1 ? 'N' : p.onOff === 2 ? 'Z' : ''}</span>
          <span>${p.noLinearEvent ? '-' : p.rampDesign ? esc(p.rampDesign) : ''}</span>
-         <span>${p.noLinearEvent ? '<i>NO RAMP LINEAR EVENT</i>' : p.desc ? esc(p.desc) : ''}</span>
-         <span style="color:#888;font-size:0.8em">${p.arMeasure != null ? parseFloat(p.arMeasure).toFixed(3) : ''}</span>
-         <span style="color:#888;font-size:0.8em">${p.odMeasure !== '' && p.odMeasure != null ? parseFloat(p.odMeasure).toFixed(3) : ''}</span>
+         <span style="text-align:left">${p.noLinearEvent ? '<i>NO RAMP LINEAR EVENT</i>' : p.desc ? esc(p.desc) : ''}</span>
        </li>`;
   }
 
@@ -179,9 +177,7 @@
          <span>R<br>U</span>
          <span>O<br>F</span>
          <span>T<br>Y</span>
-         <span>Description</span>
-         <span style="color:#888;font-size:0.8em">AR</span>
-         <span style="color:#888;font-size:0.8em">OD</span>
+         <span style="text-align:left">Description</span>
        </div>`;
 
     const items = pageSlice.map((p, i) => renderItem(p, start + i)).join('');
