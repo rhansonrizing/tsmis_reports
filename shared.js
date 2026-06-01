@@ -2225,13 +2225,13 @@ async function loadCountyCodeDomain() {
     const routeDir = _routeLabel
       ? `Route: ${esc(_routeLabel)}&emsp;&emsp;&emsp;Direction: ${esc(_directionFrom)} &ndash; ${esc(_directionTo)}`
       : '';
-    const NCOLS = 13;
+    const NCOLS = 11;
     const thead = `<thead>
       ${routeDir ? `<tr class="rd-print-route-row"><td colspan="${NCOLS}">${routeDir}</td></tr>` : ''}
       <tr>
         <th>Location</th><th>P<br>R<br>E</th><th>PM</th><th>DATE OF<br>RECORD</th>
         <th>H<br>G</th><th>AREA 4</th><th>CITY CODE</th><th>R<br>U</th><th>O<br>F</th>
-        <th>AADT<br>YEAR</th><th>ADT</th><th>T<br>Y</th><th>Description</th>
+        <th>T<br>Y</th><th>Description</th>
       </tr></thead>`;
 
     const rows = _allResults.map(p => `<tr>
@@ -2244,8 +2244,6 @@ async function loadCountyCodeDomain() {
       <td>${p.cityCode ? esc(p.cityCode) : ''}</td>
       <td>${p.popCode ? esc(p.popCode) : ''}</td>
       <td>${p.noLinearEvent ? '-' : p.onOff === 0 ? 'F' : p.onOff === 1 ? 'N' : p.onOff === 2 ? 'Z' : ''}</td>
-      <td>${p.aadtYear ? esc(p.aadtYear) : ''}</td>
-      <td>${p.aadt != null ? String(p.aadt).padStart(6, '0') : ''}</td>
       <td>${p.noLinearEvent ? '-' : p.rampDesign ? esc(p.rampDesign) : ''}</td>
       <td>${p.noLinearEvent ? '<i>NO RAMP LINEAR EVENT</i>' : p.desc ? esc(p.desc) : ''}</td>
     </tr>`).join('');
