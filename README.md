@@ -19,6 +19,32 @@ Displays aggregate counts of ramps along a route grouped by:
 
 Also reports total ramp count and ramp points without linework (ramps in layer 132 with no corresponding layer 131 record).
 
+### Highway Log
+Displays highway attribute data along a route. Each row represents a landmark, city/county boundary, or attribute-change boundary. Columns cover roadway characteristics for both left and right roadbeds plus the median.
+
+**Columns (left → right):** Location, MI (distance to next), N/A, Cnty/Odom, City, R/U, S/P/D, T/E/R, HG, Access Control; Left Roadbed — T, Lns, F, TO, TR, Wid, TO, TR; Median — TCB, YLA; Right Roadbed — T, Lns, F, TO, TR, Wid, TO, TR; Date of Record, Sig Chg Date.
+
+**Left roadbed layers** (`hl_queryRangeLayerS`): queried against both the `_S` and `_P` RouteIDs; `_S` result is preferred when non-null, `_P` is the fallback. This handles standard divided highways where left-roadbed data may be stored under `_P` rather than `_S`.
+
+**Significant change detection**: A change at an attribute-change boundary is flagged as significant when any of the following differ from the preceding record:
+
+| Condition | Trigger |
+|---|---|
+| Access Control (`ac`) | Any change |
+| # Lanes Left (`lb_lns`) | Any change |
+| # Lanes Right (`rb_lns`) | Any change |
+| Treated Shoulder Outer Left (`lb_tr1`) | Absolute difference > 4 ft |
+| Treated Shoulder Inner Left (`lb_tr2`) | Absolute difference > 4 ft |
+| Treated Shoulder Inner Right (`rb_tr1`) | Absolute difference > 4 ft |
+| Treated Shoulder Outer Right (`rb_tr2`) | Absolute difference > 4 ft |
+| Travel Way Width Left (`lb_wid`) | Absolute difference > 5 ft |
+| Travel Way Width Right (`rb_wid`) | Absolute difference > 5 ft |
+| Median Width (`med_yla`) | Transitions to or from zero |
+
+**Sig Chg Date**: The `InventoryItemStartDate` from the layer that triggered the change, formatted `YYMMDD`. When multiple layers trigger simultaneously, the **most recent** date is used. Falls back to today's date if all date fields are null.
+
+The column value(s) that triggered the flag are rendered in **bold red**. All other changed columns at that row are **bold** (non-red).
+
 ## Query Methods
 
 | Method | Description |

@@ -63,15 +63,33 @@ For local dev: change `oauthRedirectUrl` to `http://localhost:5500/index.html`.
 |-------|------|------|-----------|---------|
 | 1 | Calibration Points | Point Events | RouteId, Measure, NetworkId | Equation point detection (NetworkId=2, right-alignment only); also used by `hsl_queryEndRecord` for PM endpoint lookup |
 | 3 | PM Calibration Routes | Route Geometry (M-aware) | RouteId, PMSuffix, County | PM-network geometry; translate source for PM→AR/OD |
+| 11 | Terrain Type | Range Events | Terrain_Type | Highway Log: Terrain/elevation class |
 | 74 | City Code | Range Events | City_Code, FromARMeasure, ToARMeasure, BeginPMSuffix/EndPMSuffix | City code by AR range; queried in `queryCityBegins` for HSL and `queryRangeLayer` for all reports |
 | 85 | County Code | Range Events | County_Code, FromARMeasure, ToARMeasure, District | County ranges on route; used in `onDistrictChange` (dropdown population), `populateRouteSelect` (postmile route dropdown), `populateToCountySelect` (postmile to-county dropdown), `queryCountyBegins`, `hsl_queryEndRecord`, `hsl_queryBeginRecord`. **Note:** stores 2-char codes without trailing period (e.g. `SJ`, not `SJ.`) — strip trailing period before SQL queries; use `countyCodeMatches()` for comparisons |
+| 109 | SHS Access Control | Range Events | SHS_Access_Control, InventoryItemStartDate | Highway Log AC column; **significance trigger** — any change |
+| 110 | Barrier Type | Range Events | Barrier_Type | Highway Log: median barrier type |
+| 112 | Curb Landscape | Range Events | Curb_Landscape | Highway Log: median curb/landscape code |
+| 113 | Design Speed | Range Events | Design_Speed | Highway Log: SPD column |
 | 114 | District Boundary Events | Range Events | District, RouteID, FromARMeasure, ToARMeasure | District extents per route; used by `hsl_queryEndRecord` / `hsl_queryBeginRecord` to find END/BEGIN OF DISTRICT AR measures |
 | 116 | AllRoads (LRS) | Route Geometry | RouteID, FromARMeasure, ToARMeasure, Highway_Group | Route structure; `queryRangeLayer(116,'Highway_Group')` — also provides route max AR for END OF ROUTE detection |
+| 120 | Left Inner Shoulder | Range Events | Shld_Width_Total_In_L, Shld_Width_Treated_In_L, InventoryItemStartDate | Highway Log LB TO2/TR2 columns (queried via `hl_queryRangeLayerS`); **significance trigger** — TR2 diff > 4 ft |
+| 121 | Right Inner Shoulder | Range Events | Shld_Width_Total_In_R, Shld_Width_Treated_In_R, InventoryItemStartDate | Highway Log RB TO1/TR1 columns; **significance trigger** — TR1 diff > 4 ft |
+| 122 | Network Dates | Range Events | Network_Start_Date, Network_End_Date | Highway Log: `hl_queryNetworkStartDate` uses this to populate the Date of Record column for attrchange records |
 | 123 | Landmarks (EV_SHS_LANDMARK) | Point Events | Landmarks_Short/Long, ARMeasure, RouteID, PMPrefix/Suffix/Measure | Highway landmarks; also drives route dropdown in `onCountyChange` |
+| 124 | Median | Range Events | Median_Type, Median_Width, Median_Variance, InventoryItemStartDate | Highway Log median columns (TCB, YLA); **significance trigger** — Median_Width transitions to/from zero |
+| 125 | Non-Add Mileage | Range Events | Non_Add_Mileage | Highway Log N/A column (flag for non-additive mileage segments) |
+| 128 | Left Outer Shoulder | Range Events | Shld_Width_Total_Out_L, Shld_Width_Treated_Out_L, InventoryItemStartDate | Highway Log LB TO1/TR1 columns (queried via `hl_queryRangeLayerS`); **significance trigger** — TR1 diff > 4 ft |
+| 129 | Right Outer Shoulder | Range Events | Shld_Width_Total_Out_R, Shld_Width_Treated_Out_R, InventoryItemStartDate | Highway Log RB TO2/TR2 columns; **significance trigger** — TR2 diff > 4 ft |
 | 130 | Population Code | Range Events | Population_Code, FromARMeasure, ToARMeasure | Rural/Urban classification |
 | 131 | Ramp Attributes | Feature Table | Ramp_Name, Ramp_Description, Ramp_On_Off_Ind (0/1/2), Ramp_Design, Area4_Ind | Ramp descriptions & classification |
 | 132 | Ramp Point Events (EV_SHS_RAMP) | Point Events | Ramp_Name, ARMeasure, ODMeasure, RouteID, RouteNum, RouteSuffix, Alignment, PMPrefix/Suffix/Measure, County, District | **Primary ramp data source**; paginated (1000/page) |
 | 133 | Route Breaks (EV_SHS_ROUTE_BREAK) | Point Events | ARMeasure, RouteID, Route_Break_Type | Route discontinuities (Route Break / Route Resume) |
+| 134 | Special Feature Left | Range Events | Special_Feature_Type_L | Highway Log LB F column (queried via `hl_queryRangeLayerS`) |
+| 135 | Special Feature Right | Range Events | Special_Feature_Type_R | Highway Log RB F column |
+| 136 | Surface Type Left | Range Events | Surface_Type_L | Highway Log LB T column (queried via `hl_queryRangeLayerS`) |
+| 137 | Surface Type Right | Range Events | Surface_Type_R | Highway Log RB T column |
+| 139 | Left Lanes / Width | Range Events | Total_Num_Lanes_L, Travel_Way_Width_L, InventoryItemStartDate | Highway Log LB Lns/Wid columns (queried via `hl_queryRangeLayerS`); **significance trigger** — Lns any change, Wid diff > 5 ft |
+| 140 | Right Lanes / Width | Range Events | Total_Num_Lanes_R, Travel_Way_Width_R, InventoryItemStartDate | Highway Log RB Lns/Wid columns; **significance trigger** — Lns any change, Wid diff > 5 ft |
 | 149 | Intersection AOI | Polygons | — | Intersection area-of-interest polygons (legacy path; no longer used) |
 | 151 | Intersection Attributes | Feature Table | INTERSECTION_ID, County_Code, District_Code, Main_RouteNum/PMPrefix/PMSuffix/PMMeasure, Cross_* | Intersection details; queried for both main-route and cross-route intersections; also provides county code domain for `loadCountyCodeDomain` |
 | 215 | HSL Crash Data (Route/District/County Index) | Feature Table | routeId, fromMeasure, District_Code, County, RouteNum, hslDescription, Highway_Group, FileType, distToNextLandmark, PMPrefix, PMSuffix, PMMeasure, LRSFromDate | **"Push to Crash"** target: `hsl_exportEdit` deletes existing records in the AR range and writes current HSL results; also drives cascading dropdown data |
@@ -340,6 +358,46 @@ Same as HSL district/route mode except Phase 1 starts with translate to get segm
 
 ### Ramp Summary — Key Notes (`ramp_summary.js`)
 - **Print**: same `showPrompt` modal behavior as Ramp Detail — `rs_printAll` is async, prompts for title, passes it to `rs_renderPage(titleOverride)` which uses it in `buildCoverPage` instead of the auto-generated `"All [On/Off] Ramps on Route NNN"` label. Screen renders call `rs_renderPage()` with no argument and use the auto-generated label.
+
+### Highway Log — Key Notes (`highway_log.js`)
+
+**`hl_queryRangeLayerS(pairs, layerNum, fieldName)`**
+Highway Log-specific range lookup for left-roadbed layers (136, 139, 134, 128, 120). Queries both the `_P` and `_S` RouteIDs in a single OR clause per pair, then prefers the `_S` result (left roadbed on IA sections) but falls back to `_P` when no `_S` match is found. This handles standard divided highways where left-roadbed data is stored under `_P`.
+
+**`hl_queryAttributeChangePairs`**
+Collects `FromARMeasure` values from all range layers to identify attribute-change boundaries. Always queries L_LAYERS (136, 139, 134, 128, 120) by converting `pRanges` to `pRangesS` (replacing `_P` suffix with `_S`), even when no independent-alignment `_S` segments exist. Translates each boundary AR to OD and PM via LRServer, then returns `attrchange` pair objects.
+
+**`hl_buildResults`**
+Builds result rows from the merged pair list. Key details:
+- 8 extra `InventoryItemStartDate` queries run in the same `Promise.all` as all attribute queries, one per significance-triggering layer (109, 139, 140, 128, 120, 121, 129, 124).
+- `pad1(v)` — pads bare single-digit strings to two digits (`"3"` → `"03"`). Applied via `n1(map, name)` helper at result-build time, so both screen render and Excel export receive padded values.
+- `startDate` for `attrchange` records comes from `hl_queryNetworkStartDate` (layer 122 `Network_Start_Date`), not the ArcGIS feature start date.
+
+**Significance detection (in `hl_buildResults`)**
+
+Runs after all result objects are built; compares each `attrchange`/`landmark` record against the preceding record:
+
+| Trigger | Threshold |
+|---------|-----------|
+| `ac` change | any |
+| `lb_lns` / `rb_lns` change | any |
+| `lb_tr1` / `lb_tr2` / `rb_tr1` / `rb_tr2` diff | > 4 ft |
+| `lb_wid` / `rb_wid` diff | > 5 ft |
+| `med_yla` (Median_Width) | transitions to or from zero |
+
+When `isSig` is true:
+- `curr.sigChgDate` = `Math.max(...sigDates)` across all triggering layers' `InventoryItemStartDate` values; falls back to `todayUtc` if all dates are null.
+- `curr.sigFields` = `Set<fieldName>` of every field that triggered significance (used by `hl_renderRow` for bold red rendering).
+
+**`hl_renderRow` — bold/color logic**
+```javascript
+const bold = (val, f) => {
+  if (sig?.has(f)) return `<strong style="color:#c00">${val}</strong>`;  // significance trigger → bold red
+  if (ch?.has(f))  return `<strong>${val}</strong>`;                      // changed field → bold
+  return val;
+};
+```
+Significance styling overrides changed-field bold. Left-roadbed columns fill with `+` when `pmSuffix='R'`; right-roadbed columns fill with `+` when `pmSuffix='L'`.
 
 ### Per-Page Rows
 | Report | Rows/Page |
